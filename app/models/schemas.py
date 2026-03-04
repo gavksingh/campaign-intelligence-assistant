@@ -22,18 +22,37 @@ class ChatRequest(BaseModel):
     """Incoming chat message from the user."""
 
     message: str = Field(..., min_length=1, description="User's natural-language query.")
-    session_id: str | None = Field(None, description="Optional conversation session ID.")
+    conversation_id: str | None = Field(None, description="Optional conversation session ID.")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"message": "How did Dunkin's Q4 campaign perform?"},
+                {
+                    "message": "Compare Dunkin Q3 vs Q4",
+                    "conversation_id": "abc-123",
+                },
+            ]
+        }
+    }
 
 
 class ChatResponse(BaseModel):
     """Response returned from the /chat endpoint."""
 
-    reply: str = Field(..., description="Agent's natural-language response.")
+    response: str = Field(..., description="Agent's natural-language response.")
+    conversation_id: str = Field(..., description="Conversation session ID.")
+    tools_used: list[str] = Field(
+        default_factory=list, description="Names of agent tools invoked."
+    )
     sources: list[str] = Field(
-        default_factory=list, description="Source campaign names or IDs referenced."
+        default_factory=list, description="Source campaign names referenced."
+    )
+    processing_time_ms: int = Field(
+        ..., description="Total processing time in milliseconds."
     )
     data: dict | None = Field(
-        None, description="Optional structured data payload (metrics, charts, etc.)."
+        None, description="Optional structured data payload."
     )
 
 
@@ -112,11 +131,85 @@ class ReportResponse(BaseModel):
     download_url: str
 
 
+class PaginatedCampaigns(BaseModel):
+    """Paginated list of campaigns."""
+
+    campaigns: list["CampaignResponse"] = Field(default_factory=list)
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+class ReportGenerateRequest(BaseModel):
+    """Request to generate a campaign report."""
+
+    campaign_id: int = Field(..., description="Database ID of the campaign.")
+    format: str = Field(
+        "markdown",
+        description="Output format: 'markdown', 'pdf', or 'slack'.",
+        pattern="^(markdown|pdf|slack)$",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"campaign_id": 2, "format": "markdown"},
+                {"campaign_id": 5, "format": "pdf"},
+            ]
+        }
+    }
+
+
+class CompareRequest(BaseModel):
+    """Request to compare two campaigns."""
+
+    campaign_id_1: int = Field(..., description="Database ID of the first campaign.")
+    campaign_id_2: int = Field(..., description="Database ID of the second campaign.")
+
+
+class AudienceRecommendRequest(BaseModel):
+    """Request for audience segment recommendation."""
+
+    description: str = Field(
+        ...,
+        min_length=5,
+        description="Natural language description of target audience or campaign context.",
+    )
+    vertical: str | None = Field(
+        None, description="Optional vertical filter (QSR, Automotive, CPG, Retail, Entertainment)."
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "description": "lunch-time diners in Texas for a QSR brand",
+                    "vertical": "QSR",
+                },
+            ]
+        }
+    }
+
+
+class ReportTextResponse(BaseModel):
+    """Response containing a text-format report."""
+
+    campaign_id: int
+    campaign_name: str
+    format: str
+    content: str
+    generated_at: datetime
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
-    status: str = "ok"
+    status: str = "healthy"
     version: str = "0.1.0"
+    database: str = "unknown"
+    vector_store: str = "unknown"
+    llm: str = "unknown"
 
 
 # ---------------------------------------------------------------------------
