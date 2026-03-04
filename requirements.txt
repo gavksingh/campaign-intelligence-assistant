@@ -10,6 +10,7 @@ alembic>=1.13.0
 # LLM
 openai>=1.0.0
 anthropic>=0.40.0
+tiktoken>=0.7.0
 
 # Agent framework
 langchain-core>=0.3.0
