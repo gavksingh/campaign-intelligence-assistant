@@ -11,20 +11,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.config import settings
+from app.database import dispose_engine, init_db
+from app.services.rag import get_collection
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown.
 
-    Startup: initialize database connection pool, load vector store.
-    Shutdown: dispose of database engine, clean up resources.
+    Startup: initialize database connection pool, ensure tables exist,
+             warm up ChromaDB collection.
+    Shutdown: dispose of database engine.
     """
-    # TODO: Initialize async DB engine
-    # TODO: Initialize ChromaDB collection
+    await init_db()
+    get_collection()  # Warm up ChromaDB client + collection
     yield
-    # TODO: Dispose DB engine
-    # TODO: Clean up vector store client
+    await dispose_engine()
 
 
 app = FastAPI(

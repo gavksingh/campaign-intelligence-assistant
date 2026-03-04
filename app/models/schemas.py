@@ -1,15 +1,16 @@
 """Pydantic models for API request/response validation and structured LLM output.
 
-Schemas:
-    API layer — ChatRequest, ChatResponse, ReportResponse, HealthResponse.
-    LLM structured output — CampaignSummary, ReportContent, AudienceRecommendation.
+Groups:
+    API schemas — ChatRequest, ChatResponse, CampaignCreate, CampaignResponse.
+    LLM structured output — LCIReportSchema, CampaignComparisonSchema,
+                             AudienceRecommendationSchema.
 """
 
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.campaign import CampaignStatus
+from app.models.campaign import CampaignStatus, TargetingType, Vertical
 
 
 # ---------------------------------------------------------------------------
@@ -28,34 +29,78 @@ class ChatResponse(BaseModel):
     """Response returned from the /chat endpoint."""
 
     reply: str = Field(..., description="Agent's natural-language response.")
-    sources: list[str] = Field(default_factory=list, description="Source references used.")
-
-
-class CampaignOut(BaseModel):
-    """Campaign data returned by the API."""
-
-    id: int
-    name: str
-    status: CampaignStatus
-    budget: float
-    start_date: date
-    end_date: date | None = None
-
-    model_config = {"from_attributes": True}
+    sources: list[str] = Field(
+        default_factory=list, description="Source campaign names or IDs referenced."
+    )
+    data: dict | None = Field(
+        None, description="Optional structured data payload (metrics, charts, etc.)."
+    )
 
 
 class MetricsOut(BaseModel):
     """Campaign metrics returned by the API."""
 
-    date: date
     impressions: int
-    clicks: int
-    conversions: int
-    spend: float
-    revenue: float
-    ctr: float
-    cpa: float
-    roas: float
+    visit_lift_percent: float
+    sales_lift_percent: float
+    incremental_roas: float
+    incremental_visits: int
+    incremental_sales_dollars: float
+    avg_basket_size: float
+    purchase_frequency: float
+    top_markets: list[str]
+    top_performing_creative: str | None = None
+    control_group_size: int
+    exposed_group_size: int
+
+    model_config = {"from_attributes": True}
+
+
+class AudienceSegmentOut(BaseModel):
+    """Audience segment returned by the API."""
+
+    id: int
+    segment_name: str
+
+    model_config = {"from_attributes": True}
+
+
+class CampaignCreate(BaseModel):
+    """Schema for creating a new campaign via the API."""
+
+    campaign_name: str = Field(..., max_length=255)
+    client_name: str = Field(..., max_length=255)
+    vertical: Vertical
+    start_date: date
+    end_date: date | None = None
+    budget: float = Field(..., gt=0)
+    status: CampaignStatus = CampaignStatus.PLANNED
+    targeting_type: TargetingType
+    campaign_summary: str | None = None
+    audience_segments: list[str] = Field(
+        default_factory=list, description="Segment names to attach."
+    )
+
+
+class CampaignResponse(BaseModel):
+    """Full campaign record returned by the API."""
+
+    id: int
+    campaign_id: str
+    campaign_name: str
+    client_name: str
+    vertical: Vertical
+    start_date: date
+    end_date: date | None = None
+    budget: float
+    status: CampaignStatus
+    targeting_type: TargetingType
+    campaign_summary: str | None = None
+    created_at: datetime
+    metrics: MetricsOut | None = None
+    audience_segments: list[AudienceSegmentOut] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}
 
 
 class ReportResponse(BaseModel):
@@ -79,36 +124,123 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CampaignSummary(BaseModel):
-    """Structured summary of a campaign's performance, produced by the LLM."""
+class VisitLiftAnalysis(BaseModel):
+    """Detailed visit lift analysis section for LCI reports."""
+
+    overall_lift: str = Field(
+        ..., description="Summary of visit lift performance."
+    )
+    market_breakdown: list[str] = Field(
+        ..., description="Per-market visit lift observations."
+    )
+    daypart_insights: str = Field(
+        ..., description="Insights on which dayparts drove visits."
+    )
+
+
+class SalesLiftAnalysis(BaseModel):
+    """Detailed sales lift analysis section for LCI reports."""
+
+    overall_lift: str = Field(
+        ..., description="Summary of sales lift performance."
+    )
+    basket_size_analysis: str = Field(
+        ..., description="Analysis of average basket size trends."
+    )
+    purchase_frequency_insight: str = Field(
+        ..., description="Insight on repeat purchase behavior."
+    )
+
+
+class MarketBreakdown(BaseModel):
+    """Per-market performance breakdown."""
+
+    market_name: str
+    performance_summary: str
+    relative_ranking: str = Field(
+        ..., description="How this market ranks vs. others (top, average, below)."
+    )
+
+
+class LCIReportSchema(BaseModel):
+    """Structured output schema for a full Location Conversion Index report.
+
+    The LLM fills each section; the report generator renders it to PDF.
+    """
 
     campaign_name: str
-    overall_assessment: str = Field(
-        ..., description="One-paragraph performance assessment."
+    client_name: str
+    report_date: str
+    executive_summary: str = Field(
+        ...,
+        description="2-3 paragraph executive summary of campaign performance.",
     )
-    key_metrics: dict[str, float] = Field(
-        ..., description="Headline metrics (CTR, CPA, ROAS, etc.)."
+    visit_lift_analysis: VisitLiftAnalysis
+    sales_lift_analysis: SalesLiftAnalysis
+    market_breakdown: list[MarketBreakdown] = Field(
+        ..., description="Performance breakdown for each top market."
     )
-    strengths: list[str]
-    weaknesses: list[str]
-    recommendations: list[str]
-
-
-class ReportContent(BaseModel):
-    """Full report content generated by the LLM for PDF rendering."""
-
-    title: str
-    executive_summary: str
-    sections: list[dict[str, str]] = Field(
-        ..., description="List of {heading, body} section dicts."
+    recommendations: list[str] = Field(
+        ...,
+        description="3-5 actionable recommendations for future campaigns.",
     )
-    conclusion: str
+    methodology_note: str = Field(
+        default="Results measured using InMarket's deterministic location data with exposed vs. control group methodology.",
+        description="Standard methodology disclaimer.",
+    )
 
 
-class AudienceRecommendation(BaseModel):
-    """LLM-generated audience segment recommendation."""
+class CampaignComparisonSchema(BaseModel):
+    """Structured output for comparing two campaigns side by side."""
+
+    campaign_a_name: str
+    campaign_b_name: str
+    comparison_summary: str = Field(
+        ...,
+        description="Overall comparison narrative highlighting which campaign performed better and why.",
+    )
+    metric_comparisons: list[dict[str, str]] = Field(
+        ...,
+        description="List of {metric, campaign_a_value, campaign_b_value, winner, insight} dicts.",
+    )
+    key_differences: list[str] = Field(
+        ..., description="Top 3-5 factors explaining the performance difference."
+    )
+    recommendation: str = Field(
+        ..., description="Which approach to favor in future campaigns and why."
+    )
+
+
+class AudienceSegmentRecommendation(BaseModel):
+    """A single audience segment recommendation."""
 
     segment_name: str
-    rationale: str
-    estimated_reach: int
-    confidence: float = Field(..., ge=0.0, le=1.0)
+    rationale: str = Field(
+        ..., description="Why this segment is recommended for the campaign."
+    )
+    estimated_reach: str = Field(
+        ..., description="Estimated reachable audience size."
+    )
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence score 0-1."
+    )
+    supporting_evidence: str = Field(
+        ..., description="Historical campaign data supporting this recommendation."
+    )
+
+
+class AudienceRecommendationSchema(BaseModel):
+    """Structured output for audience segment recommendations."""
+
+    campaign_name: str
+    vertical: str
+    recommended_segments: list[AudienceSegmentRecommendation] = Field(
+        ..., description="Ranked list of recommended audience segments."
+    )
+    segments_to_avoid: list[str] = Field(
+        default_factory=list,
+        description="Segments that historically underperformed for this vertical.",
+    )
+    overall_strategy: str = Field(
+        ..., description="High-level targeting strategy recommendation."
+    )
