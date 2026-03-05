@@ -19,7 +19,10 @@ from collections.abc import AsyncGenerator
 from typing import Annotated, Literal
 
 import requests
-from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForLLMRun,
+    CallbackManagerForLLMRun,
+)
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -187,6 +190,23 @@ class GroqChatRequests(BaseChatModel):
         )
 
         return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs,
+    ) -> ChatResult:
+        """Async wrapper — runs sync _generate in a thread pool."""
+        import asyncio
+        from functools import partial
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            partial(self._generate, messages, stop, None, **kwargs),
+        )
 
 
 def _get_llm() -> BaseChatModel:
