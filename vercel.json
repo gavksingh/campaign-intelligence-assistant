@@ -2,11 +2,7 @@
   "builds": [
     {
       "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb",
-        "maxDuration": 60
-      }
+      "use": "@vercel/python"
     },
     {
       "src": "web/package.json",
