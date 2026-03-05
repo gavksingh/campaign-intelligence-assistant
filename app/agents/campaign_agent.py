@@ -621,11 +621,10 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
 
     except Exception as e:
         logger.error("invoke_agent failed: %s", e, exc_info=True)
-        error_detail = f"{type(e).__name__}: {str(e)[:500]}"
         return {
             "reply": (
                 "I'm sorry, I encountered an unexpected error processing your request. "
-                f"Debug: {error_detail}"
+                "Please try again or rephrase your question."
             ),
             "sources": [],
             "data": None,
