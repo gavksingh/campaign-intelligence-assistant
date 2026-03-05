@@ -64,13 +64,17 @@ class LLMClient:
         cfg: Settings | None = None,
     ) -> None:
         self._cfg = cfg or settings
-        self._groq = AsyncGroq(api_key=self._cfg.groq_api_key)
+        self._groq_api_key = self._cfg.groq_api_key
         self._gemini = genai.Client(api_key=self._cfg.google_api_key)
         self._default_model = self._cfg.llm_model
         self._embedding_model = self._cfg.embedding_model
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._total_cost = 0.0
+
+    def _get_groq(self) -> AsyncGroq:
+        """Create a fresh AsyncGroq client per call for serverless compatibility."""
+        return AsyncGroq(api_key=self._groq_api_key)
 
     # ── Chat completion (Groq) ─────────────────────────────────────────
 
@@ -100,7 +104,7 @@ class LLMClient:
             temperature,
         )
 
-        response = await self._groq.chat.completions.create(
+        response = await self._get_groq().chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -146,7 +150,7 @@ class LLMClient:
             temperature,
         )
 
-        stream = await self._groq.chat.completions.create(
+        stream = await self._get_groq().chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -206,7 +210,7 @@ class LLMClient:
         else:
             augmented.insert(0, {"role": "system", "content": schema_prompt})
 
-        response = await self._groq.chat.completions.create(
+        response = await self._get_groq().chat.completions.create(
             model=model,
             messages=augmented,
             temperature=temperature,
