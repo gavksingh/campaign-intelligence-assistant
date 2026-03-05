@@ -24,6 +24,9 @@ Thumbs.db
 # Reports output
 reports_output/
 
+# Legacy data
+chroma_data/
+
 # pytest
 .pytest_cache/
 htmlcov/
