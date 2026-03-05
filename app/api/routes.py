@@ -183,61 +183,69 @@ async def list_campaigns(
         limit,
     )
 
-    factory = get_session_factory()
-    async with factory() as session:
-        query = select(Campaign).options(
-            selectinload(Campaign.metrics),
-            selectinload(Campaign.audience_segments),
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            query = select(Campaign).options(
+                selectinload(Campaign.metrics),
+                selectinload(Campaign.audience_segments),
+            )
+            count_query = select(func.count(Campaign.id))
+
+            # Apply filters
+            if vertical:
+                try:
+                    v = Vertical(vertical)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid vertical '{vertical}'. Must be one of: {[e.value for e in Vertical]}",
+                    )
+                query = query.where(Campaign.vertical == v)
+                count_query = count_query.where(Campaign.vertical == v)
+
+            if status:
+                try:
+                    s = CampaignStatus(status)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid status '{status}'. Must be one of: {[e.value for e in CampaignStatus]}",
+                    )
+                query = query.where(Campaign.status == s)
+                count_query = count_query.where(Campaign.status == s)
+
+            if client:
+                query = query.where(Campaign.client_name.ilike(f"%{client}%"))
+                count_query = count_query.where(
+                    Campaign.client_name.ilike(f"%{client}%")
+                )
+
+            # Get total count
+            total_result = await session.execute(count_query)
+            total = total_result.scalar_one()
+
+            # Apply pagination
+            offset = (page - 1) * limit
+            query = query.order_by(Campaign.id).offset(offset).limit(limit)
+
+            result = await session.execute(query)
+            campaigns = result.scalars().all()
+
+            campaign_responses = [_campaign_to_response(c) for c in campaigns]
+
+        return PaginatedCampaigns(
+            campaigns=campaign_responses,
+            total=total,
+            page=page,
+            limit=limit,
+            pages=ceil(total / limit) if total > 0 else 0,
         )
-        count_query = select(func.count(Campaign.id))
-
-        # Apply filters
-        if vertical:
-            try:
-                v = Vertical(vertical)
-            except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid vertical '{vertical}'. Must be one of: {[e.value for e in Vertical]}",
-                )
-            query = query.where(Campaign.vertical == v)
-            count_query = count_query.where(Campaign.vertical == v)
-
-        if status:
-            try:
-                s = CampaignStatus(status)
-            except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid status '{status}'. Must be one of: {[e.value for e in CampaignStatus]}",
-                )
-            query = query.where(Campaign.status == s)
-            count_query = count_query.where(Campaign.status == s)
-
-        if client:
-            query = query.where(Campaign.client_name.ilike(f"%{client}%"))
-            count_query = count_query.where(Campaign.client_name.ilike(f"%{client}%"))
-
-        # Get total count
-        total_result = await session.execute(count_query)
-        total = total_result.scalar_one()
-
-        # Apply pagination
-        offset = (page - 1) * limit
-        query = query.order_by(Campaign.id).offset(offset).limit(limit)
-
-        result = await session.execute(query)
-        campaigns = result.scalars().all()
-
-        campaign_responses = [_campaign_to_response(c) for c in campaigns]
-
-    return PaginatedCampaigns(
-        campaigns=campaign_responses,
-        total=total,
-        page=page,
-        limit=limit,
-        pages=ceil(total / limit) if total > 0 else 0,
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("list_campaigns failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list campaigns: {e}")
 
 
 # ── GET /api/campaigns/{campaign_id} ─────────────────────────────────
