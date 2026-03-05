@@ -141,6 +141,10 @@ def _groq_chat_sync(
         payload["tools"] = tools
 
     resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
+    if resp.status_code != 200:
+        logger.error(
+            "Groq API error %d: %s", resp.status_code, resp.text[:500]
+        )
     resp.raise_for_status()
     return resp.json()
 
@@ -592,6 +596,13 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
         messages = final_state.get("messages", [])
         reply = "I wasn't able to generate a response. Please try again."
         sources: list[str] = []
+
+        # Debug: log all messages
+        for i, msg in enumerate(messages):
+            msg_type = type(msg).__name__
+            content_preview = (msg.content[:100] if msg.content else "(empty)")
+            has_tools = bool(hasattr(msg, "tool_calls") and msg.tool_calls)
+            logger.info("msg[%d] %s: %s | tools=%s", i, msg_type, content_preview, has_tools)
 
         # Walk messages in reverse to find the last AI message
         for msg in reversed(messages):
