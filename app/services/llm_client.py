@@ -7,6 +7,8 @@ Provides an LLMClient class with:
     - embed_text() / embed_texts() — text embedding via Gemini gemini-embedding-001.
     - Automatic retries (tenacity) and usage logging.
 
+Uses `requests` library for Groq API calls (avoids httpx issues in serverless).
+
 Usage::
 
     from app.services.llm_client import LLMClient
@@ -19,16 +21,15 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from functools import partial
 from typing import TypeVar
 
+import requests
 from google import genai
-import asyncio
-from functools import partial
-
-from groq import Groq
 from pydantic import BaseModel
 from tenacity import (
     before_sleep_log,
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Retry decorator shared by API-calling methods
 _retry = retry(
@@ -53,6 +55,35 @@ _retry = retry(
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
+
+
+def _groq_chat_sync(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    response_format: dict | None = None,
+) -> dict:
+    """Make a synchronous HTTP POST to the Groq chat completions API.
+
+    Uses `requests` (urllib3-based) instead of httpx for reliable
+    serverless compatibility.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if response_format:
+        payload["response_format"] = response_format
+
+    resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
 
 
 class LLMClient:
@@ -75,11 +106,7 @@ class LLMClient:
         self._total_output_tokens = 0
         self._total_cost = 0.0
 
-    def _get_groq(self) -> Groq:
-        """Create a fresh Groq client per call for serverless compatibility."""
-        return Groq(api_key=self._groq_api_key)
-
-    # ── Chat completion (Groq) ─────────────────────────────────────────
+    # ── Chat completion (Groq via requests) ─────────────────────────────
 
     @_retry
     async def chat_completion(
@@ -108,26 +135,28 @@ class LLMClient:
         )
 
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
+        data = await loop.run_in_executor(
             None,
             partial(
-                self._get_groq().chat.completions.create,
-                model=model,
-                messages=messages,
-                temperature=temperature,
+                _groq_chat_sync,
+                self._groq_api_key,
+                model,
+                messages,
+                temperature,
             ),
         )
 
-        reply = response.choices[0].message.content or ""
+        reply = data["choices"][0]["message"]["content"] or ""
 
         # Token accounting
-        if response.usage:
-            self._total_input_tokens += response.usage.prompt_tokens or 0
-            self._total_output_tokens += response.usage.completion_tokens or 0
+        usage = data.get("usage", {})
+        if usage:
+            self._total_input_tokens += usage.get("prompt_tokens", 0)
+            self._total_output_tokens += usage.get("completion_tokens", 0)
             logger.info(
                 "chat_completion done | prompt_tokens=%d | completion_tokens=%d",
-                response.usage.prompt_tokens or 0,
-                response.usage.completion_tokens or 0,
+                usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0),
             )
 
         return reply
@@ -141,9 +170,6 @@ class LLMClient:
         temperature: float = 0.7,
     ) -> AsyncGenerator[str, None]:
         """Stream a chat completion via Groq, yielding content chunks.
-
-        Uses sync Groq client with streaming in a thread pool for
-        serverless compatibility.
 
         Args:
             messages: OpenAI-format message list.
@@ -161,20 +187,20 @@ class LLMClient:
             temperature,
         )
 
-        # Run sync streaming in thread and collect full response
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
+        data = await loop.run_in_executor(
             None,
             partial(
-                self._get_groq().chat.completions.create,
-                model=model,
-                messages=messages,
-                temperature=temperature,
+                _groq_chat_sync,
+                self._groq_api_key,
+                model,
+                messages,
+                temperature,
             ),
         )
 
         # Yield the response in chunks for SSE
-        content = response.choices[0].message.content or ""
+        content = data["choices"][0]["message"]["content"] or ""
         chunk_size = 20
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
@@ -228,23 +254,25 @@ class LLMClient:
             augmented.insert(0, {"role": "system", "content": schema_prompt})
 
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
+        data = await loop.run_in_executor(
             None,
             partial(
-                self._get_groq().chat.completions.create,
-                model=model,
-                messages=augmented,
-                temperature=temperature,
-                response_format={"type": "json_object"},
+                _groq_chat_sync,
+                self._groq_api_key,
+                model,
+                augmented,
+                temperature,
+                {"type": "json_object"},
             ),
         )
 
         # Token accounting
-        if response.usage:
-            self._total_input_tokens += response.usage.prompt_tokens or 0
-            self._total_output_tokens += response.usage.completion_tokens or 0
+        usage = data.get("usage", {})
+        if usage:
+            self._total_input_tokens += usage.get("prompt_tokens", 0)
+            self._total_output_tokens += usage.get("completion_tokens", 0)
 
-        raw = response.choices[0].message.content or "{}"
+        raw = data["choices"][0]["message"]["content"] or "{}"
         return response_schema.model_validate(json.loads(raw))
 
     # ── Embeddings (Gemini) ────────────────────────────────────────────

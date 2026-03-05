@@ -18,6 +18,9 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Annotated, Literal
 
+import requests
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -25,13 +28,15 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_groq import ChatGroq
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from app.agents.tools import ALL_TOOLS
 from app.config import settings
+
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +85,118 @@ class AgentState(TypedDict):
 # ── LLM setup ─────────────────────────────────────────────────────────
 
 
-def _get_llm() -> ChatGroq:
-    """Create a ChatGroq instance bound to the agent tools.
+class GroqChatRequests(BaseChatModel):
+    """LangChain chat model that calls Groq API via requests (no httpx).
+
+    This avoids httpx connection issues in Vercel's serverless runtime.
+    Supports tool calling via Groq's OpenAI-compatible API.
+    """
+
+    model_name: str = "llama-3.3-70b-versatile"
+    api_key: str = ""
+    temperature: float = 0.3
+
+    @property
+    def _llm_type(self) -> str:
+        return "groq-requests"
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs,
+    ) -> ChatResult:
+        """Call Groq API via requests and return a ChatResult."""
+        # Convert LangChain messages to OpenAI format
+        oai_messages = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                oai_messages.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                oai_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                m: dict = {"role": "assistant"}
+                if msg.content:
+                    m["content"] = msg.content
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    m["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["args"]),
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                    if not msg.content:
+                        m["content"] = ""
+                oai_messages.append(m)
+            elif isinstance(msg, ToolMessage):
+                oai_messages.append({
+                    "role": "tool",
+                    "content": msg.content,
+                    "tool_call_id": msg.tool_call_id,
+                })
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {
+            "model": self.model_name,
+            "messages": oai_messages,
+            "temperature": self.temperature,
+        }
+        if stop:
+            payload["stop"] = stop
+
+        # Add tools if bound
+        if kwargs.get("tools"):
+            payload["tools"] = kwargs["tools"]
+
+        resp = requests.post(
+            GROQ_API_URL, headers=headers, json=payload, timeout=60
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        choice = data["choices"][0]["message"]
+        content = choice.get("content", "") or ""
+        tool_calls = choice.get("tool_calls")
+
+        # Build AIMessage with optional tool calls
+        additional_kwargs = {}
+        lc_tool_calls = []
+        if tool_calls:
+            additional_kwargs["tool_calls"] = tool_calls
+            for tc in tool_calls:
+                lc_tool_calls.append({
+                    "name": tc["function"]["name"],
+                    "args": json.loads(tc["function"]["arguments"]),
+                    "id": tc["id"],
+                    "type": "tool_call",
+                })
+
+        ai_msg = AIMessage(
+            content=content,
+            additional_kwargs=additional_kwargs,
+            tool_calls=lc_tool_calls,
+        )
+
+        return ChatResult(generations=[ChatGeneration(message=ai_msg)])
+
+
+def _get_llm() -> BaseChatModel:
+    """Create a Groq chat model (via requests) bound to the agent tools.
 
     Returns:
-        A ChatGroq instance with tools bound.
+        A GroqChatRequests instance with tools bound.
     """
-    llm = ChatGroq(
-        model=settings.llm_model,
+    llm = GroqChatRequests(
+        model_name=settings.llm_model,
         api_key=settings.groq_api_key,
         temperature=0.3,
     )
