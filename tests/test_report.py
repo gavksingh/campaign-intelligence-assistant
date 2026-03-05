@@ -388,7 +388,7 @@ class TestSlackSummary:
     ):
         slack = generator.generate_slack_summary(sample_report_data, sample_campaign)
         assert ":bulb:" in slack
-        assert "Increase Q4 holiday budget" in slack
+        assert "Increase Q4 holiday budget by 20%" in slack
 
     def test_line_count(
         self, generator: ReportGenerator, sample_report_data, sample_campaign
@@ -410,3 +410,9 @@ class TestSlackSummary:
         slack = generator.generate_slack_summary(sample_report_data, sample_campaign)
         assert "$225,000.00" in slack
         assert "2025-10-15" in slack
+
+    def test_slack_under_500_characters(
+        self, generator: ReportGenerator, sample_report_data, sample_campaign
+    ):
+        slack = generator.generate_slack_summary(sample_report_data, sample_campaign)
+        assert len(slack) < 500, f"Slack summary is {len(slack)} chars, should be under 500"

@@ -436,8 +436,8 @@ class ReportGenerator:
                 f"ROAS: *{_fmt_currency(m.incremental_roas)}*"
             )
             lines.append(
-                f":busts_in_silhouette: Incremental Visits: *{_fmt_number(m.incremental_visits)}* | "
-                f"Incremental Sales: *{_fmt_currency(m.incremental_sales_dollars)}*"
+                f":busts_in_silhouette: Visits: *{_fmt_number(m.incremental_visits)}* | "
+                f"Sales: *{_fmt_currency(m.incremental_sales_dollars)}*"
             )
 
         # One-line verdict: extract the first sentence of the executive summary
@@ -446,7 +446,7 @@ class ReportGenerator:
         lines.append(f":memo: {first_sentence}")
 
         if report_data.recommendations:
-            lines.append(f":bulb: Top recommendation: {report_data.recommendations[0]}")
+            lines.append(f":bulb: {report_data.recommendations[0]}")
 
         lines.append(
             f":calendar: Flight: {campaign.start_date.isoformat()}"

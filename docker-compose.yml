@@ -35,6 +35,19 @@ services:
         condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/campaign_intel
+      CHROMA_URL: http://chromadb:8000
+
+  streamlit:
+    build: .
+    command: streamlit run app/ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    depends_on:
+      - app
+    environment:
+      API_BASE_URL: http://app:8080
 
 volumes:
   pgdata:
