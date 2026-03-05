@@ -251,26 +251,22 @@ async def router_node(state: AgentState) -> dict:
     except requests.exceptions.HTTPError as e:
         logger.error("router_node HTTP error: %s", e, exc_info=True)
         if e.response is not None and e.response.status_code == 429:
-            body_preview = e.response.text[:200] if e.response else ""
             error_msg = AIMessage(
                 content=(
                     "I'm currently rate-limited by the AI service. "
-                    f"Details: {body_preview}"
+                    "Please wait a moment and try again."
                 )
             )
             # Skip retries for rate limits - go straight to END
             return {"messages": [error_msg], "error_count": MAX_RETRIES + 1}
         error_msg = AIMessage(
-            content=f"AI service error (HTTP {e.response.status_code if e.response else '?'}). Please try again."
+            content="I encountered an error connecting to the AI service. Please try again."
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
-        import traceback
-
-        tb = traceback.format_exc()[-300:]
-        logger.error("router_node LLM call failed: %s: %s\n%s", type(e).__name__, e, tb)
+        logger.error("router_node failed: %s: %s", type(e).__name__, e, exc_info=True)
         error_msg = AIMessage(
-            content=f"Error [{type(e).__name__}]: {str(e)[:200]} | TB: {tb[-200:]}"
+            content="I encountered an unexpected error. Please try again."
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
@@ -422,13 +418,6 @@ async def error_handler_node(state: AgentState) -> dict:
     error_count = state.get("error_count", 0)
     logger.warning("error_handler_node: error_count=%d", error_count)
 
-    # Find the last error message for context
-    last_error = ""
-    for msg in reversed(state.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content:
-            last_error = msg.content[:300]
-            break
-
     if error_count <= MAX_RETRIES:
         retry_msg = HumanMessage(
             content=(
@@ -440,11 +429,20 @@ async def error_handler_node(state: AgentState) -> dict:
         )
         return {"messages": [retry_msg]}
     else:
-        give_up_msg = AIMessage(
-            content=f"Service error: {last_error}"
-            if last_error
-            else "I'm having difficulty processing your request. Please try again in a moment."
-        )
+        # Find the last AI error message
+        last_error = ""
+        for msg in reversed(state.get("messages", [])):
+            if isinstance(msg, AIMessage) and msg.content:
+                last_error = msg.content
+                break
+
+        # If the error is a rate limit, pass it through
+        if "rate-limited" in last_error:
+            give_up_msg = AIMessage(content=last_error)
+        else:
+            give_up_msg = AIMessage(
+                content="I'm sorry, I encountered an error processing your request. Please try again."
+            )
         return {"messages": [give_up_msg], "error_count": MAX_RETRIES + 10}
 
 

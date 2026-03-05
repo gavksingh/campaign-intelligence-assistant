@@ -291,7 +291,7 @@ class CampaignComparisonSchema(BaseModel):
         ...,
         description="Overall comparison narrative highlighting which campaign performed better and why.",
     )
-    metric_comparisons: list[dict[str, str]] = Field(
+    metric_comparisons: list[dict[str, object]] = Field(
         ...,
         description="List of {metric, campaign_a_value, campaign_b_value, winner, insight} dicts.",
     )
