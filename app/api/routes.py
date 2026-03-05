@@ -264,13 +264,11 @@ async def get_campaign(campaign_id: int) -> CampaignResponse:
             .where(Campaign.id == campaign_id)
         )
         campaign = result.scalar_one_or_none()
-
-    if not campaign:
-        raise HTTPException(
-            status_code=404, detail=f"Campaign {campaign_id} not found."
-        )
-
-    return _campaign_to_response(campaign)
+        if not campaign:
+            raise HTTPException(
+                status_code=404, detail=f"Campaign {campaign_id} not found."
+            )
+        return _campaign_to_response(campaign)
 
 
 # ── POST /api/reports/generate ────────────────────────────────────────
@@ -304,13 +302,12 @@ async def generate_report(request: ReportGenerateRequest):
             .where(Campaign.id == request.campaign_id)
         )
         campaign = result.scalar_one_or_none()
-
-    if not campaign:
-        raise HTTPException(
-            status_code=404, detail=f"Campaign {request.campaign_id} not found."
-        )
-
-    campaign_response = _campaign_to_response(campaign)
+        if not campaign:
+            raise HTTPException(
+                status_code=404, detail=f"Campaign {request.campaign_id} not found."
+            )
+        campaign_response = _campaign_to_response(campaign)
+        campaign_name = campaign.campaign_name
 
     # Generate structured report data via the agent tool
     try:
@@ -337,7 +334,7 @@ async def generate_report(request: ReportGenerateRequest):
 
     if request.format == "pdf":
         pdf_bytes = generator.generate_pdf_report(report_schema, campaign_response)
-        filename = f"report_{campaign.campaign_name.replace(' ', '_')}.pdf"
+        filename = f"report_{campaign_name.replace(' ', '_')}.pdf"
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -351,7 +348,7 @@ async def generate_report(request: ReportGenerateRequest):
 
     return ReportTextResponse(
         campaign_id=request.campaign_id,
-        campaign_name=campaign.campaign_name,
+        campaign_name=campaign_name,
         format=request.format,
         content=content,
         generated_at=datetime.now(timezone.utc),

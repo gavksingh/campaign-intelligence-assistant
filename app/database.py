@@ -47,9 +47,10 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             settings.database_url,
             echo=False,
-            pool_size=10,
-            max_overflow=20,
+            pool_size=2,
+            max_overflow=3,
             pool_pre_ping=True,
+            pool_recycle=300,
         )
     return _engine
 

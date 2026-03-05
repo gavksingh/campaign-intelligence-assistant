@@ -145,19 +145,18 @@ def _groq_chat_sync(
     if tools:
         payload["tools"] = tools
 
-    for attempt in range(3):
-        resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
-        if resp.status_code == 429:
-            retry_after = float(resp.headers.get("retry-after", "2"))
+    for attempt in range(2):
+        resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 429 and attempt == 0:
+            retry_after = min(float(resp.headers.get("retry-after", "1")), 3)
             logger.warning("Groq 429 rate limit, retry after %.1fs", retry_after)
-            time.sleep(min(retry_after, 5))
+            time.sleep(retry_after)
             continue
         if resp.status_code != 200:
             logger.error("Groq API error %d: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         return resp.json()
 
-    # Final attempt failed
     resp.raise_for_status()
     return resp.json()
 
