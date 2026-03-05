@@ -251,22 +251,23 @@ async def router_node(state: AgentState) -> dict:
     except requests.exceptions.HTTPError as e:
         logger.error("router_node HTTP error: %s", e, exc_info=True)
         if e.response is not None and e.response.status_code == 429:
+            body_preview = e.response.text[:200] if e.response else ""
             error_msg = AIMessage(
                 content=(
                     "I'm currently rate-limited by the AI service. "
-                    "Please wait a minute and try again."
+                    f"Details: {body_preview}"
                 )
             )
             # Skip retries for rate limits - go straight to END
             return {"messages": [error_msg], "error_count": MAX_RETRIES + 1}
         error_msg = AIMessage(
-            content="I encountered an error connecting to the AI service. Please try again."
+            content=f"AI service error (HTTP {e.response.status_code if e.response else '?'}). Please try again."
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
         logger.error("router_node LLM call failed: %s: %s", type(e).__name__, e)
         error_msg = AIMessage(
-            content="I encountered an unexpected error. Please try again."
+            content=f"Unexpected error: {type(e).__name__}: {str(e)[:200]}"
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
