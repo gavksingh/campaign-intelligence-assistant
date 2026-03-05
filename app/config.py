@@ -4,6 +4,7 @@ Uses pydantic-settings to validate and type-check all configuration values
 at startup. Reads from .env file automatically.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,15 @@ class Settings(BaseSettings):
 
     # CORS
     allowed_origins: list[str] = ["*"]
+
+    @field_validator(
+        "groq_api_key", "google_api_key", "database_url", "llm_model", "embedding_model",
+        mode="before",
+    )
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        """Strip leading/trailing whitespace from string env vars."""
+        return v.strip() if isinstance(v, str) else v
 
 
 settings = Settings()

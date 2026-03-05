@@ -127,7 +127,7 @@ def _groq_chat_sync(
 ) -> dict:
     """Synchronous HTTP POST to Groq API via requests (no httpx)."""
     headers = {
-        "Authorization": f"Bearer {settings.groq_api_key}",
+        "Authorization": f"Bearer {settings.groq_api_key.strip()}",
         "Content-Type": "application/json",
     }
     payload: dict = {
