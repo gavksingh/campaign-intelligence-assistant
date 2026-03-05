@@ -4,7 +4,8 @@
       "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
-        "maxLambdaSize": "50mb"
+        "maxLambdaSize": "50mb",
+        "maxDuration": 60
       }
     },
     {
@@ -21,10 +22,5 @@
       "src": "/(.*)",
       "dest": "web/$1"
     }
-  ],
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 60
-    }
-  }
+  ]
 }
