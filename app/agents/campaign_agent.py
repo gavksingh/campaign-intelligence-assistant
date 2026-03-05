@@ -439,7 +439,7 @@ async def error_handler_node(state: AgentState) -> dict:
                 "I'm ready to help with your next question."
             )
         )
-        return {"messages": [give_up_msg], "error_count": 0}
+        return {"messages": [give_up_msg], "error_count": MAX_RETRIES + 10}
 
 
 # ── Routing logic ─────────────────────────────────────────────────────
