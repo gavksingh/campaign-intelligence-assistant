@@ -265,9 +265,12 @@ async def router_node(state: AgentState) -> dict:
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
-        logger.error("router_node LLM call failed: %s: %s", type(e).__name__, e)
+        import traceback
+
+        tb = traceback.format_exc()[-300:]
+        logger.error("router_node LLM call failed: %s: %s\n%s", type(e).__name__, e, tb)
         error_msg = AIMessage(
-            content=f"Unexpected error: {type(e).__name__}: {str(e)[:200]}"
+            content=f"Error [{type(e).__name__}]: {str(e)[:200]} | TB: {tb[-200:]}"
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
@@ -419,6 +422,13 @@ async def error_handler_node(state: AgentState) -> dict:
     error_count = state.get("error_count", 0)
     logger.warning("error_handler_node: error_count=%d", error_count)
 
+    # Find the last error message for context
+    last_error = ""
+    for msg in reversed(state.get("messages", [])):
+        if isinstance(msg, AIMessage) and msg.content:
+            last_error = msg.content[:300]
+            break
+
     if error_count <= MAX_RETRIES:
         retry_msg = HumanMessage(
             content=(
@@ -431,14 +441,9 @@ async def error_handler_node(state: AgentState) -> dict:
         return {"messages": [retry_msg]}
     else:
         give_up_msg = AIMessage(
-            content=(
-                "I apologize, but I'm having difficulty processing your request "
-                "after multiple attempts. Here's what I'd suggest:\n\n"
-                "1. Try rephrasing your question with more specific details\n"
-                "2. Ask about a specific campaign by name\n"
-                "3. Ask for a list of all campaigns to browse\n\n"
-                "I'm ready to help with your next question."
-            )
+            content=f"Service error: {last_error}"
+            if last_error
+            else "I'm having difficulty processing your request. Please try again in a moment."
         )
         return {"messages": [give_up_msg], "error_count": MAX_RETRIES + 10}
 
