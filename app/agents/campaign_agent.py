@@ -113,11 +113,13 @@ def _messages_to_oai(messages: list[BaseMessage]) -> list[dict]:
                 ]
             oai.append(m)
         elif isinstance(msg, ToolMessage):
-            oai.append({
-                "role": "tool",
-                "content": msg.content,
-                "tool_call_id": msg.tool_call_id,
-            })
+            oai.append(
+                {
+                    "role": "tool",
+                    "content": msg.content,
+                    "tool_call_id": msg.tool_call_id,
+                }
+            )
     return oai
 
 
@@ -154,12 +156,14 @@ def _parse_groq_response(data: dict) -> AIMessage:
     if raw_tool_calls:
         additional_kwargs["tool_calls"] = raw_tool_calls
         for tc in raw_tool_calls:
-            lc_tool_calls.append({
-                "name": tc["function"]["name"],
-                "args": json.loads(tc["function"]["arguments"]),
-                "id": tc["id"],
-                "type": "tool_call",
-            })
+            lc_tool_calls.append(
+                {
+                    "name": tc["function"]["name"],
+                    "args": json.loads(tc["function"]["arguments"]),
+                    "id": tc["id"],
+                    "type": "tool_call",
+                }
+            )
 
     return AIMessage(
         content=content,

@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     allowed_origins: list[str] = ["*"]
 
     @field_validator(
-        "groq_api_key", "google_api_key", "database_url", "llm_model", "embedding_model",
+        "groq_api_key",
+        "google_api_key",
+        "database_url",
+        "llm_model",
+        "embedding_model",
         mode="before",
     )
     @classmethod
