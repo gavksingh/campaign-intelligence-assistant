@@ -50,8 +50,8 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 # Retry decorator shared by API-calling methods
 _retry = retry(
     retry=retry_if_exception_type((Exception,)),
-    wait=wait_exponential(multiplier=1, min=1, max=30),
-    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=5),
+    stop=stop_after_attempt(2),
     before_sleep=before_sleep_log(logger, logging.WARNING),
     reraise=True,
 )
@@ -81,7 +81,7 @@ def _groq_chat_sync(
     if response_format:
         payload["response_format"] = response_format
 
-    resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
+    resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=25)
     resp.raise_for_status()
     return resp.json()
 

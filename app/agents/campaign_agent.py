@@ -147,22 +147,16 @@ def _groq_chat_sync(
 
     max_retries = 2
     for attempt in range(max_retries):
-        resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+        resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=25)
         if resp.status_code == 429:
-            # Check if it's a daily limit (no point retrying)
             body = resp.text
+            # Daily limits won't reset soon - fail immediately
             if "per day" in body or "TPD" in body:
-                logger.warning("Groq daily token limit reached, not retrying")
+                logger.warning("Groq daily token limit reached")
                 resp.raise_for_status()
             if attempt < max_retries - 1:
-                retry_after = float(resp.headers.get("retry-after", "2"))
-                wait = min(retry_after, 5)
-                logger.warning(
-                    "Groq 429 rate limit (attempt %d/%d), waiting %.1fs",
-                    attempt + 1,
-                    max_retries,
-                    wait,
-                )
+                wait = min(float(resp.headers.get("retry-after", "2")), 3)
+                logger.warning("Groq 429, waiting %.1fs", wait)
                 time.sleep(wait)
                 continue
         if resp.status_code != 200:
@@ -376,13 +370,7 @@ async def synthesizer_node(state: AgentState) -> dict:
         messages.insert(0, SystemMessage(content=SYSTEM_PROMPT))
 
     try:
-        response = await _call_groq(messages, with_tools=True)
-
-        # If the LLM wants more tool calls during synthesis, just use its content
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            logger.info("synthesizer_node: LLM wants more tool calls, routing back")
-            return {"messages": [response]}
-
+        response = await _call_groq(messages, with_tools=False)
         return {"messages": [response]}
     except requests.exceptions.HTTPError as e:
         logger.error("synthesizer_node HTTP error: %s", e, exc_info=True)
@@ -485,14 +473,7 @@ def route_after_router(
 def route_after_tools(
     state: AgentState,
 ) -> Literal["router", "synthesizer", "error_handler"]:
-    """Decide where to route after tool execution.
-
-    Args:
-        state: Current agent state.
-
-    Returns:
-        Next node name.
-    """
+    """Decide where to route after tool execution."""
     results = state.get("current_tool_results", "")
 
     # Check if any tool returned an error
@@ -509,8 +490,7 @@ def route_after_tools(
     if has_error and state.get("error_count", 0) <= MAX_RETRIES:
         return "error_handler"
 
-    # Send results back to the LLM for synthesis
-    # Route to router so it can decide if more tools are needed
+    # Route back to router so it can decide if more tools are needed
     return "router"
 
 
@@ -528,18 +508,8 @@ def route_after_error(state: AgentState) -> Literal["router", "__end__"]:
     return "router"
 
 
-def route_after_synthesizer(state: AgentState) -> Literal["tool_executor", "__end__"]:
-    """Decide if synthesis needs more tool calls or is done.
-
-    Args:
-        state: Current agent state.
-
-    Returns:
-        Next node name.
-    """
-    last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tool_executor"
+def route_after_synthesizer(state: AgentState) -> Literal["__end__"]:
+    """Synthesizer is always the final step."""
     return END
 
 
@@ -603,15 +573,8 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # After synthesis: done or more tools if LLM wants them
-    graph.add_conditional_edges(
-        "synthesizer",
-        route_after_synthesizer,
-        {
-            "tool_executor": "tool_executor",
-            END: END,
-        },
-    )
+    # After synthesis: always done
+    graph.add_edge("synthesizer", END)
 
     return graph
 
