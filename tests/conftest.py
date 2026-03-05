@@ -236,8 +236,8 @@ class MockLLMClient:
     """
 
     def __init__(self) -> None:
-        self._default_model = "gpt-4o-mock"
-        self._embedding_model = "text-embedding-mock"
+        self._default_model = "gemini-2.0-flash-mock"
+        self._embedding_model = "text-embedding-004-mock"
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._total_cost = 0.0
@@ -315,11 +315,11 @@ class MockLLMClient:
 
     async def embed_text(self, text: str) -> list[float]:
         """Return a deterministic embedding vector."""
-        return [0.1] * 384
+        return [0.1] * 768
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Return deterministic embedding vectors."""
-        return [[0.1] * 384 for _ in texts]
+        return [[0.1] * 768 for _ in texts]
 
     @property
     def cumulative_stats(self) -> dict:
@@ -374,8 +374,8 @@ class MockRAGService:
     ) -> list[dict]:
         return await self.retrieve(query, n_results)
 
-    def get_collection_stats(self) -> dict:
-        return {"collection_name": "campaign_data", "document_count": 18}
+    async def get_collection_stats(self) -> dict:
+        return {"collection_name": "campaign_embeddings", "document_count": 18}
 
 
 @pytest.fixture
@@ -391,7 +391,7 @@ def mock_rag() -> MockRAGService:
 async def client():
     """Async HTTP test client for FastAPI endpoint tests.
 
-    Defers app import to avoid requiring asyncpg/chromadb at collection time.
+    Defers app import to avoid requiring asyncpg at collection time.
     """
     from httpx import ASGITransport, AsyncClient
 

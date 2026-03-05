@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Annotated, Literal
 
 from langchain_core.messages import (
@@ -24,7 +25,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -79,15 +80,15 @@ class AgentState(TypedDict):
 # ── LLM setup ─────────────────────────────────────────────────────────
 
 
-def _get_llm() -> ChatOpenAI:
-    """Create a ChatOpenAI instance bound to the agent tools.
+def _get_llm() -> ChatGoogleGenerativeAI:
+    """Create a ChatGoogleGenerativeAI instance bound to the agent tools.
 
     Returns:
-        A ChatOpenAI instance with tools bound.
+        A ChatGoogleGenerativeAI instance with tools bound.
     """
-    llm = ChatOpenAI(
+    llm = ChatGoogleGenerativeAI(
         model=settings.llm_model,
-        api_key=settings.openai_api_key,
+        google_api_key=settings.google_api_key,
         temperature=0.3,
     )
     return llm.bind_tools(ALL_TOOLS)
@@ -540,4 +541,107 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
             ),
             "sources": [],
             "data": None,
+        }
+
+
+async def stream_agent(
+    query: str, session_id: str | None = None
+) -> AsyncGenerator[dict, None]:
+    """Run the agent and stream the final reply in chunks via SSE.
+
+    Runs the full agent graph (tool execution is non-streamable), then
+    streams the synthesized reply using the LLM streaming API.
+
+    Args:
+        query: Natural-language question from the user.
+        session_id: Optional session ID for conversation tracking.
+
+    Yields:
+        Dicts with 'content' (str), 'done' (bool), and optionally
+        'tools_used' and 'sources' on the final chunk.
+    """
+    from app.services.llm_client import get_llm_client
+
+    logger.info("stream_agent: query='%s'", query[:100])
+
+    # Run the full agent graph first to get tool results
+    initial_state: AgentState = {
+        "messages": [HumanMessage(content=query)],
+        "campaign_context": "",
+        "current_tool_results": "",
+        "report_data": "",
+        "error_count": 0,
+    }
+
+    try:
+        final_state = await compiled_graph.ainvoke(
+            initial_state,
+            config={"configurable": {"thread_id": session_id or "default"}},
+        )
+
+        messages = final_state.get("messages", [])
+
+        # Extract sources and tools
+        sources: list[str] = []
+        tools_used: list[str] = []
+        try:
+            ctx = final_state.get("campaign_context", "")
+            if ctx:
+                parsed = json.loads(ctx)
+                campaigns = parsed.get("campaigns", [])
+                sources = [
+                    c.get("campaign_name", "Unknown")
+                    for c in campaigns[:5]
+                    if isinstance(c, dict)
+                ]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Collect tool names from messages
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                tools_used.append("tool_call")
+            elif (
+                isinstance(msg, AIMessage)
+                and hasattr(msg, "tool_calls")
+                and msg.tool_calls
+            ):
+                for tc in msg.tool_calls:
+                    tools_used.append(tc.get("name", "unknown"))
+
+        tools_used = list(dict.fromkeys(tools_used))  # deduplicate preserving order
+        tools_used = [t for t in tools_used if t != "tool_call"]
+
+        # Build messages for streaming synthesis
+        synth_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                synth_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage) and msg.content:
+                synth_messages.append({"role": "assistant", "content": msg.content})
+            elif isinstance(msg, ToolMessage):
+                synth_messages.append(
+                    {"role": "user", "content": f"[Tool result]: {msg.content[:2000]}"}
+                )
+
+        # Stream the final synthesis
+        llm_client = get_llm_client()
+        async for chunk in llm_client.stream_chat_completion(synth_messages):
+            yield {"content": chunk, "done": False}
+
+        # Final message with metadata
+        yield {
+            "content": "",
+            "done": True,
+            "tools_used": tools_used,
+            "sources": sources,
+        }
+
+    except Exception as e:
+        logger.error("stream_agent failed: %s", e, exc_info=True)
+        yield {
+            "content": "I'm sorry, I encountered an error processing your request.",
+            "done": True,
+            "tools_used": [],
+            "sources": [],
         }

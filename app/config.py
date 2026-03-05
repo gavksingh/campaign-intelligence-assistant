@@ -16,20 +16,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # OpenAI
-    openai_api_key: str = ""
+    # Google Gemini
+    google_api_key: str = ""
 
     # Database
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/campaign_intel"
     )
 
-    # ChromaDB
-    chroma_persist_dir: str = "./chroma_data"
-
     # LLM
-    llm_model: str = "gpt-4o"
-    embedding_model: str = "text-embedding-3-small"
+    llm_model: str = "gemini-2.0-flash"
+    embedding_model: str = "text-embedding-004"
 
     # CORS
     allowed_origins: list[str] = ["*"]

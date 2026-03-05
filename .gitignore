@@ -11,9 +11,6 @@ __pycache__/
 dist/
 build/
 
-# ChromaDB
-chroma_data/
-
 # IDE
 .vscode/
 .idea/
@@ -31,3 +28,8 @@ reports_output/
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/

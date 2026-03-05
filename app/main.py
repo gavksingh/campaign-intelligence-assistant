@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown.
 
-    Startup: create database tables, warm up ChromaDB collection, init LLM client.
+    Startup: create database tables, warm up vector store, init LLM client.
     Shutdown: dispose of database engine.
     """
     from app.database import dispose_engine, init_db
@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI):
     logger.info("Database tables ensured.")
 
     rag = get_rag_service()
-    stats = rag.get_collection_stats()
-    logger.info("ChromaDB ready: %d documents", stats["document_count"])
+    stats = await rag.get_collection_stats()
+    logger.info("Vector store ready: %d documents", stats["document_count"])
 
     get_llm_client()
     logger.info("LLM client initialized (model: %s)", settings.llm_model)

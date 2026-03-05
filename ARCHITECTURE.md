@@ -19,7 +19,7 @@ The Campaign Intelligence Assistant is an AI-powered internal tool that replaces
 │                     FastAPI Backend (:8080)                        │
 │                                                                    │
 │  Middleware: CORS · Request logging · X-Processing-Time-Ms         │
-│  Lifespan:  DB init · ChromaDB warmup · LLM client init           │
+│  Lifespan:  DB init · pgvector warmup · LLM client init           │
 │                                                                    │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │                    API Routes (/api)                         │  │
@@ -29,12 +29,12 @@ The Campaign Intelligence Assistant is an AI-powered internal tool that replaces
 │  │  POST /reports/gen   → Markdown / PDF / Slack report        │  │
 │  │  POST /reports/cmp   → Side-by-side campaign comparison     │  │
 │  │  POST /audience/rec  → AI audience recommendations          │  │
-│  │  GET  /health        → DB + ChromaDB + LLM status           │  │
+│  │  GET  /health        → DB + pgvector + LLM status            │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                                                    │
 │  ┌────────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
 │  │  LangGraph     │ │   Report     │ │    RAG Service           │ │
-│  │  Agent         │ │   Generator  │ │    (ChromaDB)            │ │
+│  │  Agent         │ │   Generator  │ │    (pgvector)            │ │
 │  │                │ │              │ │                          │ │
 │  │  router ──┐    │ │  Markdown    │ │  embed_and_store()       │ │
 │  │  tool_exec│    │ │  PDF (fpdf2) │ │  retrieve() with filters│ │
@@ -43,9 +43,9 @@ The Campaign Intelligence Assistant is an AI-powered internal tool that replaces
 │  └───────┬────────┘ └──────┬───────┘ └────────────┬─────────────┘ │
 │          │                 │                      │               │
 │  ┌───────▼─────────────────▼──────────────────────▼─────────────┐ │
-│  │                    LLM Client (OpenAI)                        │ │
+│  │                 LLM Client (Google Gemini)                    │ │
 │  │  chat_completion · structured_output · embed_text/texts       │ │
-│  │  tenacity retries · tiktoken counting · cost tracking         │ │
+│  │  tenacity retries · usage metadata · cost tracking            │ │
 │  └──────────────────────────┬────────────────────────────────────┘ │
 │                              │                                     │
 │  ┌──────────────────────────▼────────────────────────────────────┐ │
@@ -71,11 +71,11 @@ User types question
           → e.g. query_campaign_data:
               LLM generates SQL → validate SELECT-only → execute against PostgreSQL
           → e.g. search_similar_campaigns:
-              embed query → ChromaDB semantic search → return ranked results
+              embed query → pgvector semantic search → return ranked results
         → synthesizer_node (LLM combines tool results into natural response)
       → return {reply, sources, data}
     → HTTP 200 with ChatResponse
-  → Streamlit renders reply with tool badges
+  → Next.js renders reply with tool badges
 ```
 
 ### 2. Report Generation Flow
@@ -105,8 +105,8 @@ python -m data.seed
   → init_db() creates tables via SQLAlchemy metadata
   → Insert campaigns, metrics, audience segments (skip duplicates)
   → Build rich text representations per campaign
-  → Embed via OpenAI text-embedding-3-small
-  → Store in ChromaDB with metadata filters
+  → Embed via Gemini text-embedding-004
+  → Store in pgvector with metadata filters
 ```
 
 ---
@@ -125,17 +125,17 @@ python -m data.seed
 
 **Alternative considered:** Raw LangChain AgentExecutor — rejected because it's a black box. We need to test routing decisions independently (e.g., "does the router send to error_handler after 3 failures?"), which requires explicit graph nodes.
 
-### OpenAI Structured Output (LLM responses)
+### Gemini Structured Output (LLM responses)
 
-**Why:** Using `response_format` with JSON schema ensures the LLM always returns data matching our Pydantic models (LCIReportSchema, CampaignComparisonSchema, AudienceRecommendationSchema). This eliminates parsing failures and makes report generation reliable. Fallback to function-calling provides compatibility with older models.
+**Why:** Using Gemini's `response_mime_type="application/json"` with schema in the system instruction ensures the LLM always returns data matching our Pydantic models (LCIReportSchema, CampaignComparisonSchema, AudienceRecommendationSchema). This eliminates parsing failures and makes report generation reliable.
 
 **Alternative considered:** Prompt engineering with regex parsing — rejected because it's fragile and requires extensive error handling for malformed responses.
 
-### ChromaDB (vector store)
+### pgvector (vector store)
 
-**Why:** Lightweight, embeddable, no separate infrastructure required for development. Supports metadata filtering (filter by vertical, client, status) alongside vector similarity search. The hybrid search pattern (combine SQL results with vector results) provides both precision and recall.
+**Why:** Runs as a PostgreSQL extension — no separate vector store service needed. Supports metadata filtering alongside cosine distance search. The hybrid search pattern (combine SQL results with vector results) provides both precision and recall. Simplifies deployment (single database) and enables transactional consistency between relational and vector data.
 
-**Alternative considered:** Pinecone — rejected because it requires external infrastructure and API keys for a tool that needs to run locally for demos. Pgvector — viable but adds complexity to the PostgreSQL setup.
+**Alternative considered:** ChromaDB — rejected because it requires a separate service in production. Pinecone — rejected because it requires external infrastructure and API keys.
 
 ### PostgreSQL + asyncpg (relational data)
 
@@ -187,7 +187,7 @@ async def _execute_readonly_sql(query: str) -> list[dict]:
 
 ### Structured Output with Fallback
 
-LLM responses use OpenAI's `response_format` parameter for reliable JSON. If the model doesn't support it, the system falls back to function-calling — maintaining compatibility across model versions.
+LLM responses use Gemini's `response_mime_type="application/json"` for reliable JSON output, with the Pydantic schema injected into the system instruction for guidance.
 
 ### Error Budget in Agent
 
@@ -206,12 +206,12 @@ The agent graph includes an error counter that limits retries to `MAX_RETRIES=2`
 
 ### Vector Store
 
-- **ChromaDB → Pgvector**: In production, move embeddings to PostgreSQL with the pgvector extension. This eliminates a separate service, simplifies backups, and enables transactional consistency between relational and vector data.
 - **Incremental indexing**: The `refresh_index()` method already supports re-embedding only new or modified campaigns.
+- **HNSW indexing**: For larger datasets, add an HNSW index on the embedding column for faster approximate nearest neighbor search.
 
 ### LLM Layer
 
-- **Model routing**: Use GPT-4o for complex analysis (report generation, comparisons) and GPT-4o-mini for simple tasks (SQL generation, classification) to reduce cost.
+- **Model routing**: Use Gemini Pro for complex analysis (report generation, comparisons) and Gemini Flash for simple tasks (SQL generation, classification) to optimize cost and latency.
 - **Response caching**: Cache LLM responses for identical queries with a TTL. Campaign data changes infrequently, so most reports can be cached.
 - **Token budgets**: The token counting infrastructure is already in place. Add per-user or per-team daily token limits.
 

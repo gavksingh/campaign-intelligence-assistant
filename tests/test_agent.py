@@ -143,9 +143,13 @@ class TestRecommendAudienceTool:
     async def test_handles_rag_failure_gracefully(self):
         """Tool should return error JSON if RAG fails."""
         failing_rag = AsyncMock()
-        failing_rag.retrieve = AsyncMock(side_effect=Exception("ChromaDB down"))
+        failing_rag.retrieve = AsyncMock(side_effect=Exception("RAG service down"))
+        mock_llm = AsyncMock()
 
-        with patch("app.agents.tools.get_rag_service", return_value=failing_rag):
+        with (
+            patch("app.agents.tools.get_rag_service", return_value=failing_rag),
+            patch("app.agents.tools.get_llm_client", return_value=mock_llm),
+        ):
             from app.agents.tools import recommend_audience
 
             result = await recommend_audience.ainvoke({"description": "test audience"})

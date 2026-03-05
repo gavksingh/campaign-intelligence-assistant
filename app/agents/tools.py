@@ -249,7 +249,7 @@ class SearchSimilarInput(BaseModel):
 async def search_similar_campaigns(query: str) -> str:
     """Search for campaigns semantically similar to the query description.
 
-    Uses vector similarity search over campaign embeddings in ChromaDB.
+    Uses vector similarity search over campaign embeddings in pgvector.
     Best for exploratory queries like 'find campaigns similar to X' or
     'which campaigns had the best ROAS'.
     """

@@ -3,6 +3,7 @@
 from app.models.campaign import (
     AudienceSegment,
     Campaign,
+    CampaignEmbedding,
     CampaignMetrics,
     CampaignStatus,
     TargetingType,
@@ -11,6 +12,7 @@ from app.models.campaign import (
 
 __all__ = [
     "Campaign",
+    "CampaignEmbedding",
     "CampaignMetrics",
     "AudienceSegment",
     "CampaignStatus",

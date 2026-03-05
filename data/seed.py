@@ -1,11 +1,11 @@
-"""Seed script to populate PostgreSQL and ChromaDB with mock campaign data.
+"""Seed script to populate PostgreSQL with mock campaign data and pgvector embeddings.
 
 Usage::
 
     python -m data.seed
 
 Reads data/mock_campaigns.json, creates all tables, inserts campaign records
-into PostgreSQL, and embeds campaign summaries with key metrics into ChromaDB
+into PostgreSQL, and embeds campaign summaries with key metrics into pgvector
 for RAG retrieval.
 """
 
@@ -16,15 +16,12 @@ import uuid
 from datetime import date
 from pathlib import Path
 
-import chromadb
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Allow running as `python -m data.seed` from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings
-from app.database import async_session_factory, dispose_engine, engine, init_db
+from app.database import get_session_factory, dispose_engine, init_db
 from app.models.campaign import (
     AudienceSegment,
     Campaign,
@@ -82,7 +79,8 @@ async def seed_database(data: list[dict]) -> dict[str, int]:
     """
     counts = {"campaigns": 0, "metrics": 0, "segments": 0}
 
-    async with async_session_factory() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         for item in data:
             # Check if campaign already exists
             existing = await session.execute(
@@ -101,7 +99,9 @@ async def seed_database(data: list[dict]) -> dict[str, int]:
                 client_name=item["client_name"],
                 vertical=_parse_enum(item["vertical"], Vertical),
                 start_date=_parse_date(item["start_date"]),
-                end_date=_parse_date(item["end_date"]) if item.get("end_date") else None,
+                end_date=_parse_date(item["end_date"])
+                if item.get("end_date")
+                else None,
                 budget=item["budget"],
                 status=_parse_enum(item["status"], CampaignStatus),
                 targeting_type=_parse_enum(item["targeting_type"], TargetingType),
@@ -147,78 +147,10 @@ async def seed_database(data: list[dict]) -> dict[str, int]:
     return counts
 
 
-def _build_embedding_text(item: dict) -> str:
-    """Build a rich text representation of a campaign for vector embedding.
+async def seed_vector_store(data: list[dict]) -> int:
+    """Embed and store campaign data in pgvector via RAGService.
 
-    Combines the campaign summary with key metrics and metadata so that
-    semantic search can match on both narrative and quantitative content.
-
-    Args:
-        item: A campaign dict from mock_campaigns.json.
-
-    Returns:
-        A formatted string suitable for embedding.
-    """
-    m = item.get("metrics", {})
-    segments = ", ".join(item.get("audience_segments", []))
-    markets = ", ".join(m.get("top_markets", []))
-
-    return (
-        f"Campaign: {item['campaign_name']}\n"
-        f"Client: {item['client_name']} | Vertical: {item['vertical']}\n"
-        f"Status: {item['status']} | Targeting: {item['targeting_type']}\n"
-        f"Budget: ${item['budget']:,.0f} | "
-        f"Dates: {item['start_date']} to {item.get('end_date', 'ongoing')}\n"
-        f"\nPerformance Metrics:\n"
-        f"  Impressions: {m.get('impressions', 0):,}\n"
-        f"  Visit Lift: {m.get('visit_lift_percent', 0)}%\n"
-        f"  Sales Lift: {m.get('sales_lift_percent', 0)}%\n"
-        f"  Incremental ROAS: ${m.get('incremental_roas', 0):.2f}\n"
-        f"  Incremental Visits: {m.get('incremental_visits', 0):,}\n"
-        f"  Incremental Sales: ${m.get('incremental_sales_dollars', 0):,.0f}\n"
-        f"  Avg Basket Size: ${m.get('avg_basket_size', 0):.2f}\n"
-        f"  Purchase Frequency: {m.get('purchase_frequency', 0):.1f}x\n"
-        f"\nTop Markets: {markets}\n"
-        f"Top Creative: {m.get('top_performing_creative', 'N/A')}\n"
-        f"Audience Segments: {segments}\n"
-        f"\nSummary: {item.get('campaign_summary', '')}"
-    )
-
-
-def _build_metadata(item: dict) -> dict:
-    """Build a metadata dict for a ChromaDB document.
-
-    Args:
-        item: A campaign dict from mock_campaigns.json.
-
-    Returns:
-        Flat metadata dict with key campaign attributes.
-    """
-    m = item.get("metrics", {})
-    return {
-        "campaign_id": item["campaign_id"],
-        "campaign_name": item["campaign_name"],
-        "client_name": item["client_name"],
-        "vertical": item["vertical"],
-        "status": item["status"],
-        "targeting_type": item["targeting_type"],
-        "budget": item["budget"],
-        "start_date": item["start_date"],
-        "end_date": item.get("end_date", ""),
-        "impressions": m.get("impressions", 0),
-        "visit_lift_percent": m.get("visit_lift_percent", 0.0),
-        "sales_lift_percent": m.get("sales_lift_percent", 0.0),
-        "incremental_roas": m.get("incremental_roas", 0.0),
-        "incremental_visits": m.get("incremental_visits", 0),
-        "incremental_sales_dollars": m.get("incremental_sales_dollars", 0.0),
-    }
-
-
-def seed_vector_store(data: list[dict]) -> int:
-    """Embed and store campaign data in ChromaDB.
-
-    Creates (or replaces) documents in the campaign_data collection with
-    rich text representations and metadata for each campaign.
+    Requires GOOGLE_API_KEY to be set for embedding generation.
 
     Args:
         data: List of campaign dicts from mock_campaigns.json.
@@ -226,43 +158,37 @@ def seed_vector_store(data: list[dict]) -> int:
     Returns:
         Number of documents embedded.
     """
-    client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+    from app.services.rag import RAGService
 
-    # Delete existing collection if present for clean reseed
-    try:
-        client.delete_collection("campaign_data")
-        print("  Deleted existing campaign_data collection.")
-    except ValueError:
-        pass
+    rag = RAGService()
 
-    collection = client.create_collection(
-        name="campaign_data",
-        metadata={"description": "Campaign performance data for RAG retrieval"},
-    )
+    # Look up DB integer IDs for each campaign by UUID
+    factory = get_session_factory()
+    campaign_dicts_with_ids: list[dict] = []
 
-    documents: list[str] = []
-    metadatas: list[dict] = []
-    ids: list[str] = []
+    async with factory() as session:
+        for item in data:
+            result = await session.execute(
+                select(Campaign.id).where(
+                    Campaign.campaign_id == uuid.UUID(item["campaign_id"])
+                )
+            )
+            db_id = result.scalar_one_or_none()
+            if db_id is not None:
+                enriched = {**item, "id": db_id}
+                campaign_dicts_with_ids.append(enriched)
+            else:
+                print(
+                    f"  Warning: no DB record for {item['campaign_name']}, skipping embed"
+                )
 
-    for item in data:
-        doc_text = _build_embedding_text(item)
-        metadata = _build_metadata(item)
-        doc_id = item["campaign_id"]
-
-        documents.append(doc_text)
-        metadatas.append(metadata)
-        ids.append(doc_id)
-        print(f"  Prepared embedding: {item['campaign_name']}")
-
-    # ChromaDB will use its default embedding function (all-MiniLM-L6-v2)
-    collection.add(documents=documents, metadatas=metadatas, ids=ids)
-
-    print(f"  Embedded {len(documents)} documents into ChromaDB.")
-    return len(documents)
+    count = await rag.embed_and_store(campaign_dicts_with_ids)
+    print(f"  Embedded {count} documents into pgvector.")
+    return count
 
 
 async def main() -> None:
-    """Run the full seed pipeline: create tables → insert DB → embed vectors."""
+    """Run the full seed pipeline: create tables -> insert DB -> embed vectors."""
     # Load mock data
     raw = MOCK_DATA_PATH.read_text(encoding="utf-8")
     data = json.loads(raw)
@@ -288,10 +214,10 @@ async def main() -> None:
         f"{counts['segments']} audience segments.\n"
     )
 
-    # Step 3: Seed ChromaDB
-    print("Seeding ChromaDB vector store...")
-    num_embedded = seed_vector_store(data)
-    print(f"\nChromaDB seeded: {num_embedded} documents.\n")
+    # Step 3: Seed pgvector embeddings
+    print("Seeding pgvector embeddings...")
+    num_embedded = await seed_vector_store(data)
+    print(f"\npgvector seeded: {num_embedded} documents.\n")
 
     # Cleanup
     await dispose_engine()

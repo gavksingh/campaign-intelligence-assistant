@@ -4,12 +4,14 @@ Models:
     Campaign — Core campaign entity with name, status, budget, date range, and targeting.
     CampaignMetrics — Performance metrics (impressions, visits, sales, ROAS).
     AudienceSegment — Targeting segments associated with campaigns.
+    CampaignEmbedding — pgvector embeddings for RAG retrieval.
 """
 
 import enum
 import uuid
 from datetime import date, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Date,
     DateTime,
@@ -176,3 +178,24 @@ class AudienceSegment(Base):
 
     def __repr__(self) -> str:
         return f"<AudienceSegment(id={self.id}, name='{self.segment_name}')>"
+
+
+class CampaignEmbedding(Base):
+    """Vector embedding for RAG retrieval over campaign data."""
+
+    __tablename__ = "campaign_embeddings"
+    __table_args__ = (Index("ix_campaign_embeddings_campaign_id", "campaign_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
+    )
+    document_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(768), nullable=False)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    campaign: Mapped["Campaign"] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<CampaignEmbedding(id={self.id}, campaign_id={self.campaign_id})>"

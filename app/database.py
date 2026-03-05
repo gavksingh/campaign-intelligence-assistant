@@ -113,9 +113,13 @@ async def init_db() -> None:
     """Create all tables defined by ORM models.
 
     Intended for development and seeding. In production, use Alembic migrations.
+    Enables the pgvector extension before creating tables.
     """
+    from sqlalchemy import text
+
     engine = get_engine()
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
 
 

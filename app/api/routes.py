@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from math import ceil
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -67,23 +67,37 @@ def _campaign_to_response(campaign: Campaign) -> CampaignResponse:
 
 @router.post(
     "/chat",
-    response_model=ChatResponse,
     summary="Chat with the campaign intelligence agent",
     description="Send a natural-language query and receive an AI-powered response "
-    "grounded in campaign performance data.",
+    "grounded in campaign performance data. Set stream=true for SSE streaming.",
 )
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+    stream: bool = Query(False, description="Enable SSE streaming response"),
+):
     """Process a natural-language query through the LangGraph campaign agent."""
-    from app.agents.campaign_agent import invoke_agent
-
-    start = time.monotonic()
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
     logger.info(
-        "POST /api/chat | conversation_id=%s | message='%s'",
+        "POST /api/chat | conversation_id=%s | stream=%s | message='%s'",
         conversation_id,
+        stream,
         request.message[:80],
     )
+
+    if stream:
+        return StreamingResponse(
+            _stream_chat(request.message, conversation_id),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    from app.agents.campaign_agent import invoke_agent
+
+    start = time.monotonic()
 
     try:
         result = await invoke_agent(request.message, session_id=conversation_id)
@@ -96,7 +110,6 @@ async def chat(request: ChatRequest) -> ChatResponse:
     # Extract tool names from result data if present
     tools_used: list[str] = []
     if result.get("data"):
-        # Infer tools from the data structure
         data = result["data"]
         if "comparison_summary" in data:
             tools_used.append("compare_campaigns")
@@ -119,6 +132,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
         processing_time_ms=elapsed_ms,
         data=result.get("data"),
     )
+
+
+async def _stream_chat(message: str, conversation_id: str):
+    """SSE async generator for streaming chat responses.
+
+    Yields SSE-formatted events with JSON data chunks.
+    """
+    from app.agents.campaign_agent import stream_agent
+
+    try:
+        async for chunk in stream_agent(message, session_id=conversation_id):
+            yield f"data: {json.dumps(chunk)}\n\n"
+    except Exception as e:
+        logger.error("SSE stream error: %s", e, exc_info=True)
+        yield f"data: {json.dumps({'content': 'Stream error occurred.', 'done': True})}\n\n"
 
 
 # ── GET /api/campaigns ────────────────────────────────────────────────
@@ -436,7 +464,7 @@ async def recommend_audience_endpoint(request: AudienceRecommendRequest):
     description="Check the health of all dependencies: database, vector store, and LLM.",
 )
 async def health_check() -> HealthResponse:
-    """Check connectivity to database, ChromaDB, and OpenAI."""
+    """Check connectivity to database, vector store, and LLM."""
     db_status = "unknown"
     vector_status = "unknown"
     llm_status = "unknown"
@@ -451,12 +479,12 @@ async def health_check() -> HealthResponse:
         logger.warning("Health check — database failed: %s", e)
         db_status = f"error: {e}"
 
-    # Check ChromaDB
+    # Check vector store (pgvector)
     try:
         from app.services.rag import get_rag_service
 
         rag = get_rag_service()
-        stats = rag.get_collection_stats()
+        stats = await rag.get_collection_stats()
         vector_status = f"ready ({stats['document_count']} documents)"
     except Exception as e:
         logger.warning("Health check — vector store failed: %s", e)

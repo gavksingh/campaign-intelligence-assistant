@@ -8,7 +8,7 @@ A step-by-step guide for demonstrating the system's capabilities.
 
 ```bash
 # Start infrastructure
-docker compose up -d postgres chromadb
+docker compose up -d postgres
 
 # Seed data (18 campaigns across 15 brands, 5 verticals)
 make seed
@@ -48,10 +48,10 @@ Verify: Open http://localhost:8501 — the sidebar should show a green "Online" 
 
 **What happens:**
 - Agent uses `search_similar_campaigns` tool
-- ChromaDB performs semantic search over campaign embeddings
+- pgvector performs semantic search over campaign embeddings
 - Results include similarity scores and key metrics
 
-**Talking point:** RAG retrieval enables fuzzy matching — you don't need exact campaign names or IDs. The system uses OpenAI embeddings stored in ChromaDB with hybrid search combining vector similarity and SQL results.
+**Talking point:** RAG retrieval enables fuzzy matching — you don't need exact campaign names or IDs. The system uses Gemini embeddings stored in pgvector with hybrid search combining vector similarity and SQL results.
 
 ---
 
@@ -113,7 +113,7 @@ Verify: Open http://localhost:8501 — the sidebar should show a green "Online" 
 
 **Show the API docs:**
 - Open http://localhost:8080/docs (Swagger UI)
-- Show the health endpoint: GET `/api/health` — displays DB, ChromaDB, and LLM connectivity
+- Show the health endpoint: GET `/api/health` — displays DB, pgvector, and LLM connectivity
 
 **Show a direct API call:**
 ```bash
@@ -126,11 +126,11 @@ curl -s http://localhost:8080/api/campaigns?limit=3 | python -m json.tool
 
 1. **LangGraph Agent** — Multi-step reasoning with router → tool executor → synthesizer flow. Error handling with retry logic (max 2 retries).
 
-2. **Structured Output** — All LLM responses use Pydantic schemas via OpenAI's `response_format` parameter. Fallback to function-calling if needed.
+2. **Structured Output** — All LLM responses use Pydantic schemas via Gemini's `response_mime_type="application/json"` parameter for reliable JSON output.
 
 3. **Async Everything** — FastAPI with async SQLAlchemy (asyncpg), async LLM calls, async RAG retrieval. No blocking I/O.
 
-4. **Hybrid Search** — Combines SQL database queries with ChromaDB vector search, deduplicates, and boosts results found in both sources.
+4. **Hybrid Search** — Combines SQL database queries with pgvector semantic search, deduplicates, and boosts results found in both sources.
 
 5. **62 Tests** — Comprehensive test suite covering agent routing, tool execution, report generation (all 4 formats), and API endpoints. Mock LLM and RAG services for deterministic testing.
 

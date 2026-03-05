@@ -1,12 +1,12 @@
-"""RAG service using ChromaDB for campaign data retrieval.
+"""RAG service using pgvector for campaign data retrieval.
 
 Provides a RAGService class that manages:
     - Embedding and storing campaign data with rich text representations.
-    - Semantic search with optional metadata filters.
+    - Semantic search with optional metadata filters via pgvector cosine distance.
     - Hybrid search combining vector results with SQL query results.
     - Index refresh/rebuild operations.
 
-Uses OpenAI embeddings as primary, with sentence-transformers local fallback.
+Uses Gemini embeddings via the LLMClient.
 
 Usage::
 
@@ -19,18 +19,18 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
-import chromadb
-from chromadb.api.models.Collection import Collection
+from sqlalchemy import delete, func, select, text
 
 from app.config import Settings, settings
+from app.database import get_session_factory
+from app.models.campaign import CampaignEmbedding
 from app.services.llm_client import LLMClient, get_llm_client
 
 logger = logging.getLogger(__name__)
-
-COLLECTION_NAME = "campaign_data"
 
 
 def _build_document_text(campaign: dict) -> str:
@@ -72,15 +72,13 @@ def _build_document_text(campaign: dict) -> str:
 
 
 def _build_metadata(campaign: dict) -> dict[str, Any]:
-    """Build a flat metadata dict for a ChromaDB document.
-
-    ChromaDB metadata values must be str, int, float, or bool.
+    """Build a metadata dict for a campaign embedding document.
 
     Args:
         campaign: A campaign dict.
 
     Returns:
-        Flat metadata dict with key campaign attributes.
+        Metadata dict with key campaign attributes.
     """
     m = campaign.get("metrics", {})
     return {
@@ -103,27 +101,23 @@ def _build_metadata(campaign: dict) -> dict[str, Any]:
 
 
 class RAGService:
-    """Manages ChromaDB vector storage and retrieval for campaign data.
+    """Manages pgvector storage and retrieval for campaign data.
 
-    Supports OpenAI embeddings (primary) with sentence-transformers fallback.
+    Uses Gemini embeddings via LLMClient and stores vectors in the
+    campaign_embeddings table with cosine distance search.
 
     Args:
         cfg: Application settings. Defaults to the global singleton.
-        llm_client: LLMClient for OpenAI embeddings. Defaults to the global singleton.
-        chroma_client: Optional pre-configured ChromaDB client for testing.
+        llm_client: LLMClient for Gemini embeddings. Defaults to the global singleton.
     """
 
     def __init__(
         self,
         cfg: Settings | None = None,
         llm_client: LLMClient | None = None,
-        chroma_client: chromadb.ClientAPI | None = None,
     ) -> None:
         self._cfg = cfg or settings
         self._llm = llm_client
-        self._chroma = chroma_client
-        self._collection: Collection | None = None
-        self._local_embedder: Any = None  # Lazy-loaded sentence-transformer
 
     @property
     def llm(self) -> LLMClient:
@@ -132,96 +126,21 @@ class RAGService:
             self._llm = get_llm_client()
         return self._llm
 
-    @property
-    def chroma(self) -> chromadb.ClientAPI:
-        """Return or create the ChromaDB client."""
-        if self._chroma is None:
-            self._chroma = chromadb.PersistentClient(path=self._cfg.chroma_persist_dir)
-        return self._chroma
-
-    @property
-    def collection(self) -> Collection:
-        """Return or create the campaign data collection."""
-        if self._collection is None:
-            self._collection = self.chroma.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"description": "Campaign performance data for RAG retrieval"},
-            )
-        return self._collection
-
-    # ── Embedding ─────────────────────────────────────────────────────
-
-    async def _embed_openai(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using the OpenAI embeddings API.
-
-        Args:
-            texts: List of strings to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
-        return await self.llm.embed_texts(texts)
-
-    def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using a local sentence-transformers model as fallback.
-
-        Lazily loads the model on first call.
-
-        Args:
-            texts: List of strings to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
-        if self._local_embedder is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                self._local_embedder = SentenceTransformer("all-MiniLM-L6-v2")
-                logger.info("Loaded local embedding model: all-MiniLM-L6-v2")
-            except ImportError:
-                raise RuntimeError(
-                    "sentence-transformers is not installed. "
-                    "Install it or provide an OpenAI API key."
-                )
-        embeddings = self._local_embedder.encode(texts, show_progress_bar=False)
-        return [emb.tolist() for emb in embeddings]
-
-    async def _embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts using OpenAI (primary) or sentence-transformers (fallback).
-
-        Args:
-            texts: List of strings to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
-        if self._cfg.openai_api_key:
-            try:
-                return await self._embed_openai(texts)
-            except Exception as exc:
-                logger.warning(
-                    "OpenAI embedding failed (%s), falling back to local model", exc
-                )
-
-        logger.info("Using local sentence-transformer embeddings")
-        return self._embed_local(texts)
-
     # ── Store ─────────────────────────────────────────────────────────
 
     async def embed_and_store(
         self,
         campaigns: list[dict],
-        collection_name: str = COLLECTION_NAME,
+        **kwargs,
     ) -> int:
-        """Embed campaign data and store in ChromaDB.
+        """Embed campaign data and store in pgvector.
 
         Builds a rich text representation for each campaign, generates
-        embeddings, and upserts into the specified collection.
+        embeddings via Gemini, and upserts into the campaign_embeddings table.
+        Upsert pattern: delete existing rows for each campaign_id, then insert.
 
         Args:
             campaigns: List of campaign dicts (from JSON or DB).
-            collection_name: ChromaDB collection to store in.
 
         Returns:
             Number of documents stored.
@@ -230,37 +149,48 @@ class RAGService:
             logger.warning("embed_and_store called with empty campaign list")
             return 0
 
-        if collection_name != COLLECTION_NAME:
-            self._collection = self.chroma.get_or_create_collection(
-                name=collection_name
-            )
-
         documents: list[str] = []
         metadatas: list[dict] = []
-        ids: list[str] = []
+        campaign_db_ids: list[int | None] = []
 
         for c in campaigns:
             doc = _build_document_text(c)
             meta = _build_metadata(c)
-            doc_id = str(c.get("campaign_id", c["campaign_name"]))
-
             documents.append(doc)
             metadatas.append(meta)
-            ids.append(doc_id)
+            # The campaign dict may have 'id' (DB PK) or we look it up
+            campaign_db_ids.append(c.get("id"))
 
         logger.info("Embedding %d campaign documents...", len(documents))
-        embeddings = await self._embed(documents)
+        embeddings = await self.llm.embed_texts(documents)
 
-        self.collection.upsert(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+        factory = get_session_factory()
+        async with factory() as session:
+            # Delete existing embeddings for these campaigns (upsert)
+            valid_ids = [cid for cid in campaign_db_ids if cid is not None]
+            if valid_ids:
+                await session.execute(
+                    delete(CampaignEmbedding).where(
+                        CampaignEmbedding.campaign_id.in_(valid_ids)
+                    )
+                )
 
-        logger.info(
-            "Stored %d documents in collection '%s'", len(documents), collection_name
-        )
+            # Insert new embeddings
+            for i, doc in enumerate(documents):
+                db_id = campaign_db_ids[i]
+                if db_id is None:
+                    continue
+                embedding_row = CampaignEmbedding(
+                    campaign_id=db_id,
+                    document_text=doc,
+                    embedding=embeddings[i],
+                    metadata_json=json.dumps(metadatas[i]),
+                )
+                session.add(embedding_row)
+
+            await session.commit()
+
+        logger.info("Stored %d documents in campaign_embeddings", len(documents))
         return len(documents)
 
     # ── Retrieve ──────────────────────────────────────────────────────
@@ -271,15 +201,14 @@ class RAGService:
         n_results: int = 5,
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
-        """Semantic search over campaign documents.
+        """Semantic search over campaign documents via pgvector cosine distance.
 
         Args:
             query: Natural-language search query.
             n_results: Maximum number of results.
-            filters: Optional ChromaDB where-clause filters. Supports:
+            filters: Optional metadata filters applied post-query. Supports:
                 - {"vertical": "QSR"} — exact match
                 - {"client_name": "Dunkin'"} — exact match
-                - {"incremental_roas": {"$gte": 30.0}} — numeric comparison
 
         Returns:
             List of dicts with 'document', 'metadata', 'distance', and 'id' keys,
@@ -293,50 +222,63 @@ class RAGService:
         )
 
         # Embed the query
-        query_embedding = await self._embed([query])
+        query_embedding = await self.llm.embed_text(query)
 
-        # Build ChromaDB query kwargs
-        query_kwargs: dict[str, Any] = {
-            "query_embeddings": query_embedding,
-            "n_results": min(n_results, self.collection.count() or n_results),
-        }
+        # Fetch more results if we need to filter post-query
+        fetch_limit = n_results * 3 if filters else n_results
 
-        if filters:
-            # Wrap multiple filters in $and for ChromaDB
-            if len(filters) > 1:
-                where_clauses = []
+        factory = get_session_factory()
+        async with factory() as session:
+            result = await session.execute(
+                text(
+                    "SELECT id, campaign_id, document_text, metadata_json, "
+                    "embedding <=> :query_vec AS distance "
+                    "FROM campaign_embeddings "
+                    "ORDER BY embedding <=> :query_vec "
+                    "LIMIT :limit"
+                ),
+                {"query_vec": str(query_embedding), "limit": fetch_limit},
+            )
+            rows = result.fetchall()
+
+        output: list[dict] = []
+        for row in rows:
+            row_id, campaign_id, doc_text, meta_json, distance = row
+            metadata = json.loads(meta_json) if meta_json else {}
+
+            # Apply post-query metadata filters
+            if filters:
+                match = True
                 for key, value in filters.items():
                     if isinstance(value, dict):
-                        where_clauses.append({key: value})
+                        # Numeric comparison (e.g., {"$gte": 30.0})
+                        meta_val = metadata.get(key, 0)
+                        for op, threshold in value.items():
+                            if op == "$gte" and meta_val < threshold:
+                                match = False
+                            elif op == "$lte" and meta_val > threshold:
+                                match = False
+                            elif op == "$gt" and meta_val <= threshold:
+                                match = False
+                            elif op == "$lt" and meta_val >= threshold:
+                                match = False
                     else:
-                        where_clauses.append({key: value})
-                query_kwargs["where"] = {"$and": where_clauses}
-            else:
-                query_kwargs["where"] = filters
+                        if metadata.get(key) != value:
+                            match = False
+                if not match:
+                    continue
 
-        # Guard against empty collection
-        if self.collection.count() == 0:
-            logger.warning("Collection is empty, returning no results")
-            return []
-
-        results = self.collection.query(**query_kwargs)
-
-        # Reshape results into a list of dicts
-        output: list[dict] = []
-        ids = results.get("ids", [[]])[0]
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
-
-        for i, doc_id in enumerate(ids):
             output.append(
                 {
-                    "id": doc_id,
-                    "document": documents[i] if i < len(documents) else "",
-                    "metadata": metadatas[i] if i < len(metadatas) else {},
-                    "distance": distances[i] if i < len(distances) else 999.0,
+                    "id": str(metadata.get("campaign_id", row_id)),
+                    "document": doc_text,
+                    "metadata": metadata,
+                    "distance": float(distance),
                 }
             )
+
+            if len(output) >= n_results:
+                break
 
         logger.info("retrieve returned %d results", len(output))
         return output
@@ -391,9 +333,7 @@ class RAGService:
         for vr in vector_results:
             key = vr["id"]
             if key in seen:
-                # Keep the entry but note it appeared in both sources
                 seen[key]["source"] = "both"
-                # Boost relevance: halve the vector distance for dual-source matches
                 seen[key]["distance"] = min(seen[key]["distance"], vr["distance"] * 0.5)
             else:
                 vr["source"] = "vector"
@@ -424,30 +364,34 @@ class RAGService:
         """
         logger.info("Refreshing vector index...")
 
-        try:
-            self.chroma.delete_collection(COLLECTION_NAME)
-            logger.info("Deleted existing collection '%s'", COLLECTION_NAME)
-        except ValueError:
-            logger.info("No existing collection to delete")
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(delete(CampaignEmbedding))
+            await session.commit()
+        logger.info("Deleted all existing embeddings")
 
-        self._collection = None  # Reset cached collection reference
         count = await self.embed_and_store(campaigns)
         logger.info("Index refreshed with %d documents", count)
         return count
 
-    def get_collection_stats(self) -> dict:
-        """Return basic stats about the current collection.
+    async def get_collection_stats(self) -> dict:
+        """Return basic stats about the campaign embeddings.
 
         Returns:
             Dict with count and collection name.
         """
+        factory = get_session_factory()
+        async with factory() as session:
+            result = await session.execute(select(func.count(CampaignEmbedding.id)))
+            count = result.scalar_one()
+
         return {
-            "collection_name": COLLECTION_NAME,
-            "document_count": self.collection.count(),
+            "collection_name": "campaign_embeddings",
+            "document_count": count,
         }
 
 
-# ── Module-level helpers (keep backward compat with scaffold) ─────────
+# ── Module-level helpers ──────────────────────────────────────────────
 
 _default_rag: RAGService | None = None
 
@@ -462,12 +406,3 @@ def get_rag_service() -> RAGService:
     if _default_rag is None:
         _default_rag = RAGService()
     return _default_rag
-
-
-def get_collection() -> Collection:
-    """Return the ChromaDB collection (backward compat with main.py lifespan).
-
-    Returns:
-        The ChromaDB Collection object.
-    """
-    return get_rag_service().collection
