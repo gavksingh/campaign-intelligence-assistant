@@ -145,20 +145,26 @@ def _groq_chat_sync(
     if tools:
         payload["tools"] = tools
 
-    max_retries = 3
+    max_retries = 2
     for attempt in range(max_retries):
         resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
-        if resp.status_code == 429 and attempt < max_retries - 1:
-            retry_after = float(resp.headers.get("retry-after", str(2**attempt)))
-            wait = min(retry_after, 8)
-            logger.warning(
-                "Groq 429 rate limit (attempt %d/%d), waiting %.1fs",
-                attempt + 1,
-                max_retries,
-                wait,
-            )
-            time.sleep(wait)
-            continue
+        if resp.status_code == 429:
+            # Check if it's a daily limit (no point retrying)
+            body = resp.text
+            if "per day" in body or "TPD" in body:
+                logger.warning("Groq daily token limit reached, not retrying")
+                resp.raise_for_status()
+            if attempt < max_retries - 1:
+                retry_after = float(resp.headers.get("retry-after", "2"))
+                wait = min(retry_after, 5)
+                logger.warning(
+                    "Groq 429 rate limit (attempt %d/%d), waiting %.1fs",
+                    attempt + 1,
+                    max_retries,
+                    wait,
+                )
+                time.sleep(wait)
+                continue
         if resp.status_code != 200:
             logger.error("Groq API error %d: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
@@ -250,13 +256,24 @@ async def router_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except requests.exceptions.HTTPError as e:
         logger.error("router_node HTTP error: %s", e, exc_info=True)
-        status = e.response.status_code if e.response is not None else "unknown"
-        body = e.response.text[:300] if e.response is not None else "no body"
-        error_msg = AIMessage(content=f"API error (HTTP {status}): {body}")
+        if e.response is not None and e.response.status_code == 429:
+            error_msg = AIMessage(
+                content=(
+                    "I'm currently rate-limited by the AI service. "
+                    "Please wait a minute and try again."
+                )
+            )
+            # Skip retries for rate limits - go straight to END
+            return {"messages": [error_msg], "error_count": MAX_RETRIES + 1}
+        error_msg = AIMessage(
+            content="I encountered an error connecting to the AI service. Please try again."
+        )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
         logger.error("router_node LLM call failed: %s: %s", type(e).__name__, e)
-        error_msg = AIMessage(content=f"Error: {type(e).__name__}: {str(e)[:300]}")
+        error_msg = AIMessage(
+            content="I encountered an unexpected error. Please try again."
+        )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
 
@@ -369,9 +386,17 @@ async def synthesizer_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except requests.exceptions.HTTPError as e:
         logger.error("synthesizer_node HTTP error: %s", e, exc_info=True)
-        status = e.response.status_code if e.response is not None else "unknown"
-        body = e.response.text[:300] if e.response is not None else "no body"
-        fallback = AIMessage(content=f"Synthesis API error (HTTP {status}): {body}")
+        if e.response is not None and e.response.status_code == 429:
+            fallback = AIMessage(
+                content=(
+                    "I'm currently rate-limited by the AI service. "
+                    "Please wait a minute and try again."
+                )
+            )
+        else:
+            fallback = AIMessage(
+                content="I encountered an error generating the response. Please try again."
+            )
         return {"messages": [fallback]}
     except Exception as e:
         logger.error("synthesizer_node failed: %s: %s", type(e).__name__, e)
@@ -379,13 +404,14 @@ async def synthesizer_node(state: AgentState) -> dict:
         if raw_results:
             fallback = AIMessage(
                 content=(
-                    "I retrieved data but had trouble formatting. "
-                    f"Error: {type(e).__name__}: {str(e)[:200]}\n\n"
-                    "Raw results:\n" + raw_results[:2000]
+                    "I retrieved the data but had trouble formatting it. "
+                    "Here are the raw results:\n\n" + raw_results[:3000]
                 )
             )
         else:
-            fallback = AIMessage(content=f"Error: {type(e).__name__}: {str(e)[:300]}")
+            fallback = AIMessage(
+                content="I encountered an unexpected error. Please try again."
+            )
         return {"messages": [fallback]}
 
 

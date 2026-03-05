@@ -10,7 +10,6 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-import requests
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -121,48 +120,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": f"{type(exc).__name__}: {exc}"},
     )
-
-
-# ── Groq connectivity test ────────────────────────────────────────────
-
-
-@app.get("/api/test-groq")
-async def test_groq():
-    """Test Groq API connectivity from this environment."""
-    import time
-
-    from app.config import settings
-
-    start = time.monotonic()
-    try:
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.groq_api_key.strip()}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.llm_model,
-                "messages": [{"role": "user", "content": "say hi"}],
-                "max_tokens": 10,
-            },
-            timeout=15,
-        )
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "status_code": resp.status_code,
-            "elapsed_ms": elapsed,
-            "headers": {
-                k: v for k, v in resp.headers.items() if k.startswith("x-ratelimit")
-            },
-            "body_preview": resp.text[:200],
-        }
-    except Exception as e:
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "error": f"{type(e).__name__}: {e}",
-            "elapsed_ms": elapsed,
-        }
 
 
 # ── Include API routes ────────────────────────────────────────────────
