@@ -122,64 +122,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ── Test endpoint ────────────────────────────────────────────────────
-
-
-@app.get("/api/test-db")
-async def test_db():
-    """Minimal DB test endpoint."""
-    import traceback
-
-    from sqlalchemy import func, select
-    from sqlalchemy.orm import selectinload
-
-    from app.database import get_session_factory
-    from app.models.campaign import Campaign
-
-    steps = {}
-    try:
-        factory = get_session_factory()
-        async with factory() as session:
-            # Step 1: count
-            r = await session.execute(select(func.count(Campaign.id)))
-            steps["count"] = r.scalar_one()
-
-            # Step 2: simple query
-            r = await session.execute(select(Campaign).order_by(Campaign.id).limit(1))
-            c = r.scalar_one_or_none()
-            if c:
-                steps["name"] = c.campaign_name
-                steps["cid_type"] = type(c.campaign_id).__name__
-
-            # Step 3: with relationships
-            r = await session.execute(
-                select(Campaign)
-                .options(
-                    selectinload(Campaign.metrics),
-                    selectinload(Campaign.audience_segments),
-                )
-                .order_by(Campaign.id)
-                .limit(1)
-            )
-            c = r.scalar_one_or_none()
-            if c:
-                steps["has_metrics"] = c.metrics is not None
-                steps["segments"] = (
-                    len(c.audience_segments) if c.audience_segments else 0
-                )
-                # Step 4: serialize
-                from app.api.routes import _campaign_to_dict
-
-                d = _campaign_to_dict(c)
-                steps["dict_keys"] = list(d.keys())
-
-    except Exception as e:
-        steps["error"] = f"{type(e).__name__}: {e}"
-        steps["traceback"] = traceback.format_exc()
-
-    return steps
-
-
 # ── Include API routes ────────────────────────────────────────────────
 
 from app.api.routes import router  # noqa: E402

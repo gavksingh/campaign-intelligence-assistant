@@ -129,7 +129,7 @@ def _groq_chat_sync(
 ) -> dict:
     """Synchronous HTTP POST to Groq API via requests (no httpx).
 
-    Retries once on 429 (rate limit) after a short delay.
+    Retries up to 3 times on 429 (rate limit) with exponential backoff.
     """
     import time
 
@@ -145,12 +145,19 @@ def _groq_chat_sync(
     if tools:
         payload["tools"] = tools
 
-    for attempt in range(2):
+    max_retries = 3
+    for attempt in range(max_retries):
         resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
-        if resp.status_code == 429 and attempt == 0:
-            retry_after = min(float(resp.headers.get("retry-after", "1")), 3)
-            logger.warning("Groq 429 rate limit, retry after %.1fs", retry_after)
-            time.sleep(retry_after)
+        if resp.status_code == 429 and attempt < max_retries - 1:
+            retry_after = float(resp.headers.get("retry-after", str(2**attempt)))
+            wait = min(retry_after, 8)
+            logger.warning(
+                "Groq 429 rate limit (attempt %d/%d), waiting %.1fs",
+                attempt + 1,
+                max_retries,
+                wait,
+            )
+            time.sleep(wait)
             continue
         if resp.status_code != 200:
             logger.error("Groq API error %d: %s", resp.status_code, resp.text[:500])
@@ -243,9 +250,11 @@ async def router_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except Exception as e:
         logger.error("router_node LLM call failed: %s", e, exc_info=True)
-        error_detail = str(e)[:500]
         error_msg = AIMessage(
-            content=f"I encountered an issue processing your request: {error_detail}"
+            content=(
+                "I'm temporarily experiencing high demand. "
+                "Please try again in a moment."
+            )
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
@@ -359,14 +368,22 @@ async def synthesizer_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except Exception as e:
         logger.error("synthesizer_node failed: %s", e, exc_info=True)
-        error_detail = str(e)[:500]
-        fallback = AIMessage(
-            content=(
-                "I was able to retrieve the data but encountered an issue "
-                f"formatting the response. Error: {error_detail}\n\n"
-                + state.get("current_tool_results", "No results available.")[:2000]
+        # Try to return raw tool results if synthesis fails
+        raw_results = state.get("current_tool_results", "")
+        if raw_results:
+            fallback = AIMessage(
+                content=(
+                    "I retrieved the data but had trouble formatting it. "
+                    "Here are the raw results:\n\n" + raw_results[:3000]
+                )
             )
-        )
+        else:
+            fallback = AIMessage(
+                content=(
+                    "I'm temporarily experiencing high demand. "
+                    "Please try again in a moment."
+                )
+            )
         return {"messages": [fallback]}
 
 
