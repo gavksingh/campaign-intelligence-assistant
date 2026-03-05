@@ -25,7 +25,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -80,15 +80,15 @@ class AgentState(TypedDict):
 # ── LLM setup ─────────────────────────────────────────────────────────
 
 
-def _get_llm() -> ChatGoogleGenerativeAI:
-    """Create a ChatGoogleGenerativeAI instance bound to the agent tools.
+def _get_llm() -> ChatGroq:
+    """Create a ChatGroq instance bound to the agent tools.
 
     Returns:
-        A ChatGoogleGenerativeAI instance with tools bound.
+        A ChatGroq instance with tools bound.
     """
-    llm = ChatGoogleGenerativeAI(
+    llm = ChatGroq(
         model=settings.llm_model,
-        google_api_key=settings.google_api_key,
+        api_key=settings.groq_api_key,
         temperature=0.3,
     )
     return llm.bind_tools(ALL_TOOLS)

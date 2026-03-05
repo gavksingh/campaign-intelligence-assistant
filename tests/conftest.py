@@ -236,8 +236,8 @@ class MockLLMClient:
     """
 
     def __init__(self) -> None:
-        self._default_model = "gemini-2.0-flash-mock"
-        self._embedding_model = "text-embedding-004-mock"
+        self._default_model = "llama-3.3-70b-mock"
+        self._embedding_model = "gemini-embedding-mock"
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._total_cost = 0.0

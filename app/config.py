@@ -16,7 +16,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Google Gemini
+    # Groq (chat / structured output)
+    groq_api_key: str = ""
+
+    # Google Gemini (embeddings only)
     google_api_key: str = ""
 
     # Database
@@ -25,7 +28,7 @@ class Settings(BaseSettings):
     )
 
     # LLM
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "gemini-embedding-001"
 
     # CORS
