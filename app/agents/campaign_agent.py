@@ -248,14 +248,15 @@ async def router_node(state: AgentState) -> dict:
             bool(response.content),
         )
         return {"messages": [response]}
+    except requests.exceptions.HTTPError as e:
+        logger.error("router_node HTTP error: %s", e, exc_info=True)
+        status = e.response.status_code if e.response is not None else "unknown"
+        body = e.response.text[:300] if e.response is not None else "no body"
+        error_msg = AIMessage(content=f"API error (HTTP {status}): {body}")
+        return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
-        logger.error("router_node LLM call failed: %s", e, exc_info=True)
-        error_msg = AIMessage(
-            content=(
-                "I'm temporarily experiencing high demand. "
-                "Please try again in a moment."
-            )
-        )
+        logger.error("router_node LLM call failed: %s: %s", type(e).__name__, e)
+        error_msg = AIMessage(content=f"Error: {type(e).__name__}: {str(e)[:300]}")
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
 
@@ -366,24 +367,25 @@ async def synthesizer_node(state: AgentState) -> dict:
             return {"messages": [response]}
 
         return {"messages": [response]}
+    except requests.exceptions.HTTPError as e:
+        logger.error("synthesizer_node HTTP error: %s", e, exc_info=True)
+        status = e.response.status_code if e.response is not None else "unknown"
+        body = e.response.text[:300] if e.response is not None else "no body"
+        fallback = AIMessage(content=f"Synthesis API error (HTTP {status}): {body}")
+        return {"messages": [fallback]}
     except Exception as e:
-        logger.error("synthesizer_node failed: %s", e, exc_info=True)
-        # Try to return raw tool results if synthesis fails
+        logger.error("synthesizer_node failed: %s: %s", type(e).__name__, e)
         raw_results = state.get("current_tool_results", "")
         if raw_results:
             fallback = AIMessage(
                 content=(
-                    "I retrieved the data but had trouble formatting it. "
-                    "Here are the raw results:\n\n" + raw_results[:3000]
+                    "I retrieved data but had trouble formatting. "
+                    f"Error: {type(e).__name__}: {str(e)[:200]}\n\n"
+                    "Raw results:\n" + raw_results[:2000]
                 )
             )
         else:
-            fallback = AIMessage(
-                content=(
-                    "I'm temporarily experiencing high demand. "
-                    "Please try again in a moment."
-                )
-            )
+            fallback = AIMessage(content=f"Error: {type(e).__name__}: {str(e)[:300]}")
         return {"messages": [fallback]}
 
 
