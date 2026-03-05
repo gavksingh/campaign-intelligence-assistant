@@ -48,8 +48,8 @@ You help internal teams understand campaign performance, generate reports, and m
 You have access to these tools:
 - query_campaign_data: Query the campaign database with natural language (translates to SQL). Use for specific lookups by client, vertical, date range, status, or metrics.
 - search_similar_campaigns: Semantic search to find campaigns by description. Use for exploratory queries or finding campaigns by characteristics.
-- compare_campaigns: Compare two campaigns side-by-side. Needs two campaign database IDs (integer id, NOT UUID).
-- generate_lci_report: Generate a Location Conversion Index attribution report for a campaign. Needs a campaign database ID.
+- compare_campaigns: Compare two campaigns side-by-side. Needs two campaign integer database IDs (the "id" field from query/search results, NOT the UUID "campaign_id").
+- generate_lci_report: Generate a Location Conversion Index attribution report for a campaign. Needs the integer database ID (the "id" field).
 - recommend_audience: Get audience segment recommendations based on a description. Use when asked about targeting or audience strategy.
 
 Guidelines:
@@ -127,7 +127,12 @@ def _groq_chat_sync(
     oai_messages: list[dict],
     tools: list[dict] | None = None,
 ) -> dict:
-    """Synchronous HTTP POST to Groq API via requests (no httpx)."""
+    """Synchronous HTTP POST to Groq API via requests (no httpx).
+
+    Retries once on 429 (rate limit) after a short delay.
+    """
+    import time
+
     headers = {
         "Authorization": f"Bearer {settings.groq_api_key.strip()}",
         "Content-Type": "application/json",
@@ -140,11 +145,19 @@ def _groq_chat_sync(
     if tools:
         payload["tools"] = tools
 
-    resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
-    if resp.status_code != 200:
-        logger.error(
-            "Groq API error %d: %s", resp.status_code, resp.text[:500]
-        )
+    for attempt in range(3):
+        resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
+        if resp.status_code == 429:
+            retry_after = float(resp.headers.get("retry-after", "2"))
+            logger.warning("Groq 429 rate limit, retry after %.1fs", retry_after)
+            time.sleep(min(retry_after, 5))
+            continue
+        if resp.status_code != 200:
+            logger.error("Groq API error %d: %s", resp.status_code, resp.text[:500])
+        resp.raise_for_status()
+        return resp.json()
+
+    # Final attempt failed
     resp.raise_for_status()
     return resp.json()
 
@@ -597,13 +610,6 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
         reply = "I wasn't able to generate a response. Please try again."
         sources: list[str] = []
 
-        # Debug: log all messages
-        for i, msg in enumerate(messages):
-            msg_type = type(msg).__name__
-            content_preview = (msg.content[:100] if msg.content else "(empty)")
-            has_tools = bool(hasattr(msg, "tool_calls") and msg.tool_calls)
-            logger.info("msg[%d] %s: %s | tools=%s", i, msg_type, content_preview, has_tools)
-
         # Walk messages in reverse to find the last AI message
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
@@ -631,12 +637,6 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
                 data = json.loads(final_state["report_data"])
             except (json.JSONDecodeError, TypeError):
                 pass
-
-        # Debug: include message trace in reply
-        _trace = []
-        for i, msg in enumerate(messages):
-            _trace.append(f"{i}:{type(msg).__name__}:{(msg.content or '')[:60]}|tc={bool(hasattr(msg, 'tool_calls') and msg.tool_calls)}")
-        reply = reply + "\n\n---DEBUG---\n" + "\n".join(_trace)
 
         return {"reply": reply, "sources": sources, "data": data}
 

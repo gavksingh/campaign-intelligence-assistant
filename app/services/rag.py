@@ -268,6 +268,8 @@ class RAGService:
                 if not match:
                     continue
 
+            # campaign_id is the integer FK to campaigns.id
+            metadata["db_id"] = campaign_id
             output.append(
                 {
                     "id": str(metadata.get("campaign_id", row_id)),

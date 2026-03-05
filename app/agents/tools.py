@@ -77,8 +77,10 @@ Given a natural language question, generate a read-only PostgreSQL SELECT query.
 
 Rules:
 - ONLY generate SELECT statements. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL.
+- ALWAYS include campaigns.id in the SELECT columns — the agent needs it for compare/report tools.
 - Always JOIN campaign_metrics ON campaign_metrics.campaign_id = campaigns.id when metrics are needed.
-- Use ILIKE for text matching.
+- Use ILIKE for text matching on text columns (campaign_name, client_name, campaign_summary).
+- The 'vertical' and 'status' columns are enum types — use = not ILIKE for them (e.g., vertical = 'QSR').
 - For date ranges: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec.
 - Return ONLY the SQL query, no explanation or markdown.
 - Limit results to 20 rows unless the user asks for more.
@@ -265,6 +267,7 @@ async def search_similar_campaigns(query: str) -> str:
         for r in results:
             output.append(
                 {
+                    "id": r["metadata"].get("db_id"),
                     "campaign_name": r["metadata"].get("campaign_name", "Unknown"),
                     "client_name": r["metadata"].get("client_name", "Unknown"),
                     "vertical": r["metadata"].get("vertical", "Unknown"),
