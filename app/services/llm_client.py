@@ -25,7 +25,10 @@ from collections.abc import AsyncGenerator
 from typing import TypeVar
 
 from google import genai
-from groq import AsyncGroq
+import asyncio
+from functools import partial
+
+from groq import Groq
 from pydantic import BaseModel
 from tenacity import (
     before_sleep_log,
@@ -72,9 +75,9 @@ class LLMClient:
         self._total_output_tokens = 0
         self._total_cost = 0.0
 
-    def _get_groq(self) -> AsyncGroq:
-        """Create a fresh AsyncGroq client per call for serverless compatibility."""
-        return AsyncGroq(api_key=self._groq_api_key)
+    def _get_groq(self) -> Groq:
+        """Create a fresh Groq client per call for serverless compatibility."""
+        return Groq(api_key=self._groq_api_key)
 
     # ── Chat completion (Groq) ─────────────────────────────────────────
 
@@ -104,10 +107,15 @@ class LLMClient:
             temperature,
         )
 
-        response = await self._get_groq().chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self._get_groq().chat.completions.create,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            ),
         )
 
         reply = response.choices[0].message.content or ""
@@ -134,6 +142,9 @@ class LLMClient:
     ) -> AsyncGenerator[str, None]:
         """Stream a chat completion via Groq, yielding content chunks.
 
+        Uses sync Groq client with streaming in a thread pool for
+        serverless compatibility.
+
         Args:
             messages: OpenAI-format message list.
             model: Override the default model.
@@ -150,17 +161,23 @@ class LLMClient:
             temperature,
         )
 
-        stream = await self._get_groq().chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            stream=True,
+        # Run sync streaming in thread and collect full response
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self._get_groq().chat.completions.create,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            ),
         )
 
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
-                yield delta.content
+        # Yield the response in chunks for SSE
+        content = response.choices[0].message.content or ""
+        chunk_size = 20
+        for i in range(0, len(content), chunk_size):
+            yield content[i : i + chunk_size]
 
     # ── Structured output (Groq with JSON mode) ───────────────────────
 
@@ -210,11 +227,16 @@ class LLMClient:
         else:
             augmented.insert(0, {"role": "system", "content": schema_prompt})
 
-        response = await self._get_groq().chat.completions.create(
-            model=model,
-            messages=augmented,
-            temperature=temperature,
-            response_format={"type": "json_object"},
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self._get_groq().chat.completions.create,
+                model=model,
+                messages=augmented,
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            ),
         )
 
         # Token accounting
