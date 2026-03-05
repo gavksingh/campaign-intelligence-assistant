@@ -37,7 +37,6 @@ from app.models.schemas import (
     ChatResponse,
     CompareRequest,
     HealthResponse,
-    PaginatedCampaigns,
     ReportGenerateRequest,
     ReportTextResponse,
 )
@@ -50,24 +49,53 @@ router = APIRouter(prefix="/api", tags=["api"])
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def _campaign_to_response(campaign: Campaign) -> CampaignResponse:
-    """Convert a Campaign ORM object to a CampaignResponse schema."""
-    return CampaignResponse(
-        id=campaign.id,
-        campaign_id=str(campaign.campaign_id),
-        campaign_name=campaign.campaign_name,
-        client_name=campaign.client_name,
-        vertical=campaign.vertical,
-        start_date=campaign.start_date,
-        end_date=campaign.end_date,
-        budget=campaign.budget,
-        status=campaign.status,
-        targeting_type=campaign.targeting_type,
-        campaign_summary=campaign.campaign_summary,
-        created_at=campaign.created_at,
-        metrics=campaign.metrics,
-        audience_segments=campaign.audience_segments or [],
-    )
+def _campaign_to_dict(campaign: Campaign) -> dict:
+    """Convert a Campaign ORM object to a JSON-safe dict."""
+    metrics = None
+    if campaign.metrics:
+        m = campaign.metrics
+        metrics = {
+            "impressions": m.impressions,
+            "visit_lift_percent": m.visit_lift_percent,
+            "sales_lift_percent": m.sales_lift_percent,
+            "incremental_roas": m.incremental_roas,
+            "incremental_visits": m.incremental_visits,
+            "incremental_sales_dollars": m.incremental_sales_dollars,
+            "avg_basket_size": m.avg_basket_size,
+            "purchase_frequency": m.purchase_frequency,
+            "top_markets": m.top_markets or [],
+            "top_performing_creative": m.top_performing_creative,
+            "control_group_size": m.control_group_size,
+            "exposed_group_size": m.exposed_group_size,
+        }
+
+    segments = []
+    if campaign.audience_segments:
+        segments = [
+            {"id": s.id, "segment_name": s.segment_name}
+            for s in campaign.audience_segments
+        ]
+
+    return {
+        "id": campaign.id,
+        "campaign_id": str(campaign.campaign_id),
+        "campaign_name": campaign.campaign_name,
+        "client_name": campaign.client_name,
+        "vertical": campaign.vertical.value if campaign.vertical else None,
+        "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
+        "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
+        "budget": campaign.budget,
+        "status": campaign.status.value if campaign.status else None,
+        "targeting_type": (
+            campaign.targeting_type.value if campaign.targeting_type else None
+        ),
+        "campaign_summary": campaign.campaign_summary,
+        "created_at": (
+            campaign.created_at.isoformat() if campaign.created_at else None
+        ),
+        "metrics": metrics,
+        "audience_segments": segments,
+    }
 
 
 # ── POST /api/chat ────────────────────────────────────────────────────
@@ -162,7 +190,6 @@ async def _stream_chat(message: str, conversation_id: str):
 
 @router.get(
     "/campaigns",
-    response_model=PaginatedCampaigns,
     summary="List campaigns with optional filters",
     description="Retrieve campaigns filtered by vertical, status, or client name. "
     "Supports pagination.",
@@ -180,7 +207,7 @@ async def list_campaigns(
     ),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Results per page"),
-) -> PaginatedCampaigns:
+):
     """Return a paginated list of campaigns with optional filters."""
     logger.info(
         "GET /api/campaigns | vertical=%s status=%s client=%s page=%d limit=%d",
@@ -240,15 +267,15 @@ async def list_campaigns(
             result = await session.execute(query)
             campaigns = result.scalars().all()
 
-            campaign_responses = [_campaign_to_response(c) for c in campaigns]
+            campaign_responses = [_campaign_to_dict(c) for c in campaigns]
 
-        return PaginatedCampaigns(
-            campaigns=campaign_responses,
-            total=total,
-            page=page,
-            limit=limit,
-            pages=ceil(total / limit) if total > 0 else 0,
-        )
+        return {
+            "campaigns": campaign_responses,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": ceil(total / limit) if total > 0 else 0,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -261,11 +288,10 @@ async def list_campaigns(
 
 @router.get(
     "/campaigns/{campaign_id}",
-    response_model=CampaignResponse,
     summary="Get a single campaign with full details",
     description="Retrieve a campaign by its database ID, including metrics and audience segments.",
 )
-async def get_campaign(campaign_id: int) -> CampaignResponse:
+async def get_campaign(campaign_id: int):
     """Return full campaign details by database ID."""
     logger.info("GET /api/campaigns/%d", campaign_id)
 
@@ -284,7 +310,7 @@ async def get_campaign(campaign_id: int) -> CampaignResponse:
             raise HTTPException(
                 status_code=404, detail=f"Campaign {campaign_id} not found."
             )
-        return _campaign_to_response(campaign)
+        return _campaign_to_dict(campaign)
 
 
 # ── POST /api/reports/generate ────────────────────────────────────────
@@ -322,7 +348,8 @@ async def generate_report(request: ReportGenerateRequest):
             raise HTTPException(
                 status_code=404, detail=f"Campaign {request.campaign_id} not found."
             )
-        campaign_response = _campaign_to_response(campaign)
+        campaign_dict = _campaign_to_dict(campaign)
+        campaign_response = CampaignResponse.model_validate(campaign_dict)
         campaign_name = campaign.campaign_name
 
     # Generate structured report data via the agent tool
@@ -465,91 +492,6 @@ async def recommend_audience_endpoint(request: AudienceRecommendRequest):
         "recommendation": recommendation_dict,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-
-
-# ── GET /api/debug/campaigns ──────────────────────────────────────────
-
-
-@router.get("/debug/campaigns")
-async def debug_campaigns():
-    """Debug endpoint to test campaign query step by step."""
-    steps = {}
-    try:
-        factory = get_session_factory()
-        steps["factory"] = "ok"
-
-        async with factory() as session:
-            steps["session"] = "ok"
-
-            # Step 1: simple count
-            result = await session.execute(select(func.count(Campaign.id)))
-            count = result.scalar_one()
-            steps["count"] = count
-
-            # Step 2: fetch one campaign without relationships
-            result = await session.execute(
-                select(Campaign).order_by(Campaign.id).limit(1)
-            )
-            campaign = result.scalar_one_or_none()
-            if campaign:
-                steps["campaign_found"] = True
-                steps["campaign_id_type"] = type(campaign.campaign_id).__name__
-                steps["campaign_name"] = campaign.campaign_name
-                steps["created_at"] = str(campaign.created_at)
-                steps["created_at_type"] = type(campaign.created_at).__name__
-
-                # Step 3: try model_validate
-                try:
-                    resp = CampaignResponse(
-                        id=campaign.id,
-                        campaign_id=str(campaign.campaign_id),
-                        campaign_name=campaign.campaign_name,
-                        client_name=campaign.client_name,
-                        vertical=campaign.vertical,
-                        start_date=campaign.start_date,
-                        end_date=campaign.end_date,
-                        budget=campaign.budget,
-                        status=campaign.status,
-                        targeting_type=campaign.targeting_type,
-                        campaign_summary=campaign.campaign_summary,
-                        created_at=campaign.created_at,
-                    )
-                    steps["pydantic_basic"] = "ok"
-                except Exception as e:
-                    steps["pydantic_basic_error"] = str(e)
-
-            # Step 4: fetch with relationships
-            result = await session.execute(
-                select(Campaign)
-                .options(
-                    selectinload(Campaign.metrics),
-                    selectinload(Campaign.audience_segments),
-                )
-                .order_by(Campaign.id)
-                .limit(1)
-            )
-            campaign = result.scalar_one_or_none()
-            if campaign:
-                steps["with_relationships"] = True
-                steps["metrics_type"] = type(campaign.metrics).__name__
-                steps["metrics_is_none"] = campaign.metrics is None
-                steps["segments_count"] = (
-                    len(campaign.audience_segments) if campaign.audience_segments else 0
-                )
-
-                try:
-                    resp = _campaign_to_response(campaign)
-                    steps["full_response"] = "ok"
-                    steps["response_preview"] = resp.model_dump(
-                        include={"id", "campaign_name"}
-                    )
-                except Exception as e:
-                    steps["full_response_error"] = f"{type(e).__name__}: {e}"
-
-    except Exception as e:
-        steps["error"] = f"{type(e).__name__}: {e}"
-
-    return steps
 
 
 # ── GET /api/health ───────────────────────────────────────────────────
