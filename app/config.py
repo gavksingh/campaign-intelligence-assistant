@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # LLM
     llm_model: str = "gemini-2.0-flash"
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
 
     # CORS
     allowed_origins: list[str] = ["*"]

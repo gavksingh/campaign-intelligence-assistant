@@ -315,11 +315,11 @@ class MockLLMClient:
 
     async def embed_text(self, text: str) -> list[float]:
         """Return a deterministic embedding vector."""
-        return [0.1] * 768
+        return [0.1] * 3072
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Return deterministic embedding vectors."""
-        return [[0.1] * 768 for _ in texts]
+        return [[0.1] * 3072 for _ in texts]
 
     @property
     def cumulative_stats(self) -> dict:

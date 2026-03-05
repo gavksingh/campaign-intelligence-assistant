@@ -191,7 +191,7 @@ class CampaignEmbedding(Base):
         ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False
     )
     document_text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding = mapped_column(Vector(768), nullable=False)
+    embedding = mapped_column(Vector(3072), nullable=False)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
