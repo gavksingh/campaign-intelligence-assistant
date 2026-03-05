@@ -632,6 +632,12 @@ async def invoke_agent(query: str, session_id: str | None = None) -> dict:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # Debug: include message trace in reply
+        _trace = []
+        for i, msg in enumerate(messages):
+            _trace.append(f"{i}:{type(msg).__name__}:{(msg.content or '')[:60]}|tc={bool(hasattr(msg, 'tool_calls') and msg.tool_calls)}")
+        reply = reply + "\n\n---DEBUG---\n" + "\n".join(_trace)
+
         return {"reply": reply, "sources": sources, "data": data}
 
     except Exception as e:
