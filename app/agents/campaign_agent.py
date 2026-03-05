@@ -136,8 +136,9 @@ async def router_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except Exception as e:
         logger.error("router_node LLM call failed: %s", e, exc_info=True)
+        error_detail = str(e)[:500]
         error_msg = AIMessage(
-            content="I encountered an issue processing your request. Let me try a different approach."
+            content=f"I encountered an issue processing your request: {error_detail}"
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
@@ -253,10 +254,11 @@ async def synthesizer_node(state: AgentState) -> dict:
         return {"messages": [response]}
     except Exception as e:
         logger.error("synthesizer_node failed: %s", e, exc_info=True)
+        error_detail = str(e)[:500]
         fallback = AIMessage(
             content=(
                 "I was able to retrieve the data but encountered an issue "
-                "formatting the response. Here's what I found:\n\n"
+                f"formatting the response. Error: {error_detail}\n\n"
                 + state.get("current_tool_results", "No results available.")[:2000]
             )
         )
