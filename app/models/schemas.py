@@ -21,8 +21,12 @@ from app.models.campaign import CampaignStatus, TargetingType, Vertical
 class ChatRequest(BaseModel):
     """Incoming chat message from the user."""
 
-    message: str = Field(..., min_length=1, description="User's natural-language query.")
-    conversation_id: str | None = Field(None, description="Optional conversation session ID.")
+    message: str = Field(
+        ..., min_length=1, description="User's natural-language query."
+    )
+    conversation_id: str | None = Field(
+        None, description="Optional conversation session ID."
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -51,9 +55,7 @@ class ChatResponse(BaseModel):
     processing_time_ms: int = Field(
         ..., description="Total processing time in milliseconds."
     )
-    data: dict | None = Field(
-        None, description="Optional structured data payload."
-    )
+    data: dict | None = Field(None, description="Optional structured data payload.")
 
 
 class MetricsOut(BaseModel):
@@ -177,7 +179,8 @@ class AudienceRecommendRequest(BaseModel):
         description="Natural language description of target audience or campaign context.",
     )
     vertical: str | None = Field(
-        None, description="Optional vertical filter (QSR, Automotive, CPG, Retail, Entertainment)."
+        None,
+        description="Optional vertical filter (QSR, Automotive, CPG, Retail, Entertainment).",
     )
 
     model_config = {
@@ -220,9 +223,7 @@ class HealthResponse(BaseModel):
 class VisitLiftAnalysis(BaseModel):
     """Detailed visit lift analysis section for LCI reports."""
 
-    overall_lift: str = Field(
-        ..., description="Summary of visit lift performance."
-    )
+    overall_lift: str = Field(..., description="Summary of visit lift performance.")
     market_breakdown: list[str] = Field(
         ..., description="Per-market visit lift observations."
     )
@@ -234,9 +235,7 @@ class VisitLiftAnalysis(BaseModel):
 class SalesLiftAnalysis(BaseModel):
     """Detailed sales lift analysis section for LCI reports."""
 
-    overall_lift: str = Field(
-        ..., description="Summary of sales lift performance."
-    )
+    overall_lift: str = Field(..., description="Summary of sales lift performance.")
     basket_size_analysis: str = Field(
         ..., description="Analysis of average basket size trends."
     )
@@ -311,12 +310,8 @@ class AudienceSegmentRecommendation(BaseModel):
     rationale: str = Field(
         ..., description="Why this segment is recommended for the campaign."
     )
-    estimated_reach: str = Field(
-        ..., description="Estimated reachable audience size."
-    )
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Confidence score 0-1."
-    )
+    estimated_reach: str = Field(..., description="Estimated reachable audience size.")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0-1.")
     supporting_evidence: str = Field(
         ..., description="Historical campaign data supporting this recommendation."
     )

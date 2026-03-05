@@ -26,9 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_session_factory
 from app.models.campaign import (
-    AudienceSegment,
     Campaign,
-    CampaignMetrics,
     CampaignStatus,
     Vertical,
 )
@@ -134,16 +132,27 @@ async def chat(request: ChatRequest) -> ChatResponse:
     "Supports pagination.",
 )
 async def list_campaigns(
-    vertical: str | None = Query(None, description="Filter by vertical (QSR, Automotive, CPG, Retail, Entertainment)"),
-    status: str | None = Query(None, description="Filter by status (completed, active, planned, paused)"),
-    client: str | None = Query(None, description="Filter by client name (case-insensitive partial match)"),
+    vertical: str | None = Query(
+        None,
+        description="Filter by vertical (QSR, Automotive, CPG, Retail, Entertainment)",
+    ),
+    status: str | None = Query(
+        None, description="Filter by status (completed, active, planned, paused)"
+    ),
+    client: str | None = Query(
+        None, description="Filter by client name (case-insensitive partial match)"
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Results per page"),
 ) -> PaginatedCampaigns:
     """Return a paginated list of campaigns with optional filters."""
     logger.info(
         "GET /api/campaigns | vertical=%s status=%s client=%s page=%d limit=%d",
-        vertical, status, client, page, limit,
+        vertical,
+        status,
+        client,
+        page,
+        limit,
     )
 
     factory = get_session_factory()
@@ -229,7 +238,9 @@ async def get_campaign(campaign_id: int) -> CampaignResponse:
         campaign = result.scalar_one_or_none()
 
     if not campaign:
-        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id} not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Campaign {campaign_id} not found."
+        )
 
     return _campaign_to_response(campaign)
 
@@ -292,9 +303,7 @@ async def generate_report(request: ReportGenerateRequest):
     try:
         report_schema = LCIReportSchema.model_validate(report_data_dict)
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to parse report data: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to parse report data: {e}")
 
     generator = ReportGenerator()
 
@@ -406,9 +415,7 @@ async def recommend_audience_endpoint(request: AudienceRecommendRequest):
         recommendation_dict = json.loads(raw_result)
     except Exception as e:
         logger.error("Audience recommendation failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Recommendation failed: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Recommendation failed: {e}")
 
     if "error" in recommendation_dict:
         raise HTTPException(status_code=500, detail=recommendation_dict["error"])

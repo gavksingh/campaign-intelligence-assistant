@@ -11,8 +11,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.report_gen import ReportGenerator
-
 
 # ── Tool unit tests ───────────────────────────────────────────────────
 
@@ -50,7 +48,11 @@ class TestQueryCampaignDataTool:
 
         from app.agents.tools import _serialize_row
 
-        row = {"name": "test", "start": date(2025, 1, 1), "ts": datetime(2025, 1, 1, 12, 0)}
+        row = {
+            "name": "test",
+            "start": date(2025, 1, 1),
+            "ts": datetime(2025, 1, 1, 12, 0),
+        }
         result = _serialize_row(row)
         assert result["start"] == "2025-01-01"
         assert "2025-01-01" in result["ts"]
@@ -82,7 +84,10 @@ class TestSearchSimilarTool:
             parsed = json.loads(result)
             assert "campaigns" in parsed
             assert parsed["count"] >= 1
-            assert parsed["campaigns"][0]["campaign_name"] == "Dunkin' Q4 Holiday Favorites"
+            assert (
+                parsed["campaigns"][0]["campaign_name"]
+                == "Dunkin' Q4 Holiday Favorites"
+            )
 
     @pytest.mark.asyncio
     async def test_includes_similarity_score(self, mock_rag):
@@ -143,9 +148,7 @@ class TestRecommendAudienceTool:
         with patch("app.agents.tools.get_rag_service", return_value=failing_rag):
             from app.agents.tools import recommend_audience
 
-            result = await recommend_audience.ainvoke(
-                {"description": "test audience"}
-            )
+            result = await recommend_audience.ainvoke({"description": "test audience"})
             parsed = json.loads(result)
             assert "error" in parsed
 
@@ -262,9 +265,7 @@ class TestAgentInvoke:
             "error_count": 0,
         }
 
-        with patch(
-            "app.agents.campaign_agent.compiled_graph"
-        ) as mock_graph:
+        with patch("app.agents.campaign_agent.compiled_graph") as mock_graph:
             from langchain_core.messages import AIMessage
 
             mock_result["messages"] = [AIMessage(content="Test response")]
@@ -282,9 +283,7 @@ class TestAgentInvoke:
     @pytest.mark.asyncio
     async def test_invoke_handles_exception_gracefully(self):
         """invoke_agent should return error message, never raise."""
-        with patch(
-            "app.agents.campaign_agent.compiled_graph"
-        ) as mock_graph:
+        with patch("app.agents.campaign_agent.compiled_graph") as mock_graph:
             mock_graph.ainvoke = AsyncMock(side_effect=Exception("LLM exploded"))
 
             from app.agents.campaign_agent import invoke_agent
@@ -292,5 +291,7 @@ class TestAgentInvoke:
             result = await invoke_agent("test query")
 
             assert "reply" in result
-            assert "error" in result["reply"].lower() or "sorry" in result["reply"].lower()
+            assert (
+                "error" in result["reply"].lower() or "sorry" in result["reply"].lower()
+            )
             assert result["sources"] == []

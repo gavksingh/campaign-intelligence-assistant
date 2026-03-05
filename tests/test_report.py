@@ -326,9 +326,7 @@ class TestComparisonReport:
         assert "| Metric |" in md
         assert "| Visit Lift |" in md
 
-    def test_highlights_winners(
-        self, generator: ReportGenerator, sample_comparison
-    ):
+    def test_highlights_winners(self, generator: ReportGenerator, sample_comparison):
         md = generator.generate_comparison_report(sample_comparison)
         # Winner values should be bold
         assert "**18.2%**" in md
@@ -394,7 +392,7 @@ class TestSlackSummary:
         self, generator: ReportGenerator, sample_report_data, sample_campaign
     ):
         slack = generator.generate_slack_summary(sample_report_data, sample_campaign)
-        lines = [l for l in slack.strip().split("\n") if l.strip()]
+        lines = [line for line in slack.strip().split("\n") if line.strip()]
         assert 4 <= len(lines) <= 7
 
     def test_uses_slack_bold_not_markdown(
@@ -415,4 +413,6 @@ class TestSlackSummary:
         self, generator: ReportGenerator, sample_report_data, sample_campaign
     ):
         slack = generator.generate_slack_summary(sample_report_data, sample_campaign)
-        assert len(slack) < 500, f"Slack summary is {len(slack)} chars, should be under 500"
+        assert len(slack) < 500, (
+            f"Slack summary is {len(slack)} chars, should be under 500"
+        )

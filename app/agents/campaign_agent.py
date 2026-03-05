@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from langchain_core.messages import (
     AIMessage,
@@ -136,7 +136,7 @@ async def router_node(state: AgentState) -> dict:
     except Exception as e:
         logger.error("router_node LLM call failed: %s", e, exc_info=True)
         error_msg = AIMessage(
-            content=f"I encountered an issue processing your request. Let me try a different approach."
+            content="I encountered an issue processing your request. Let me try a different approach."
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
 
@@ -181,9 +181,7 @@ async def tool_executor_node(state: AgentState) -> dict:
 
         try:
             result = await tool_fn.ainvoke(tool_args)
-            tool_messages.append(
-                ToolMessage(content=str(result), tool_call_id=tool_id)
-            )
+            tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
             all_results.append(str(result))
             logger.info("Tool %s completed successfully", tool_name)
         except Exception as e:
@@ -306,7 +304,9 @@ async def error_handler_node(state: AgentState) -> dict:
 # ── Routing logic ─────────────────────────────────────────────────────
 
 
-def route_after_router(state: AgentState) -> Literal["tool_executor", "synthesizer", "error_handler"]:
+def route_after_router(
+    state: AgentState,
+) -> Literal["tool_executor", "synthesizer", "error_handler"]:
     """Decide where to route after the router node.
 
     Args:
@@ -329,7 +329,9 @@ def route_after_router(state: AgentState) -> Literal["tool_executor", "synthesiz
     return "synthesizer"
 
 
-def route_after_tools(state: AgentState) -> Literal["router", "synthesizer", "error_handler"]:
+def route_after_tools(
+    state: AgentState,
+) -> Literal["router", "synthesizer", "error_handler"]:
     """Decide where to route after tool execution.
 
     Args:
@@ -417,30 +419,46 @@ def build_graph() -> StateGraph:
     graph.add_edge(START, "router")
 
     # Router decides: tools, synthesize, or error
-    graph.add_conditional_edges("router", route_after_router, {
-        "tool_executor": "tool_executor",
-        "synthesizer": "synthesizer",
-        "error_handler": "error_handler",
-    })
+    graph.add_conditional_edges(
+        "router",
+        route_after_router,
+        {
+            "tool_executor": "tool_executor",
+            "synthesizer": "synthesizer",
+            "error_handler": "error_handler",
+        },
+    )
 
     # After tools: back to router (for multi-step), synthesize, or error
-    graph.add_conditional_edges("tool_executor", route_after_tools, {
-        "router": "router",
-        "synthesizer": "synthesizer",
-        "error_handler": "error_handler",
-    })
+    graph.add_conditional_edges(
+        "tool_executor",
+        route_after_tools,
+        {
+            "router": "router",
+            "synthesizer": "synthesizer",
+            "error_handler": "error_handler",
+        },
+    )
 
     # After error: retry via router or give up (END)
-    graph.add_conditional_edges("error_handler", route_after_error, {
-        "router": "router",
-        END: END,
-    })
+    graph.add_conditional_edges(
+        "error_handler",
+        route_after_error,
+        {
+            "router": "router",
+            END: END,
+        },
+    )
 
     # After synthesis: done or more tools if LLM wants them
-    graph.add_conditional_edges("synthesizer", route_after_synthesizer, {
-        "tool_executor": "tool_executor",
-        END: END,
-    })
+    graph.add_conditional_edges(
+        "synthesizer",
+        route_after_synthesizer,
+        {
+            "tool_executor": "tool_executor",
+            END: END,
+        },
+    )
 
     return graph
 

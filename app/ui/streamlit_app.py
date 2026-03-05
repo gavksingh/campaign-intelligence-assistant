@@ -11,7 +11,7 @@ Usage::
 
 from __future__ import annotations
 
-import time
+import os
 from datetime import datetime, timezone
 
 import httpx
@@ -19,7 +19,8 @@ import streamlit as st
 
 # ── Configuration ─────────────────────────────────────────────────────
 
-API_BASE = "http://localhost:8080/api"
+_api_base_url = os.getenv("API_BASE_URL", "http://localhost:8080")
+API_BASE = f"{_api_base_url.rstrip('/')}/api"
 REQUEST_TIMEOUT = 120.0
 
 st.set_page_config(
@@ -264,7 +265,9 @@ def _render_sidebar() -> None:
                 '<span class="status-dot status-red"></span> API Offline',
                 unsafe_allow_html=True,
             )
-            st.error("Cannot connect to API. Start the server with `uvicorn app.main:app --port 8080`")
+            st.error(
+                "Cannot connect to API. Start the server with `uvicorn app.main:app --port 8080`"
+            )
 
         st.markdown("---")
 
@@ -301,7 +304,11 @@ def _render_sidebar() -> None:
                             mime="application/pdf",
                         )
                         st.session_state.recent_reports.append(
-                            {"name": selected_campaign, "format": "pdf", "time": datetime.now(timezone.utc).strftime("%H:%M")}
+                            {
+                                "name": selected_campaign,
+                                "format": "pdf",
+                                "time": datetime.now(timezone.utc).strftime("%H:%M"),
+                            }
                         )
                     else:
                         st.error("PDF generation failed.")
@@ -320,7 +327,11 @@ def _render_sidebar() -> None:
                             }
                         )
                         st.session_state.recent_reports.append(
-                            {"name": selected_campaign, "format": report_format, "time": datetime.now(timezone.utc).strftime("%H:%M")}
+                            {
+                                "name": selected_campaign,
+                                "format": report_format,
+                                "time": datetime.now(timezone.utc).strftime("%H:%M"),
+                            }
                         )
                         st.rerun()
                     elif result and "error" in result:
@@ -401,10 +412,16 @@ def _render_sidebar() -> None:
                             f"  {seg.get('rationale', '')}"
                         )
                     if rec.get("segments_to_avoid"):
-                        lines.append(f"\n**Avoid:** {', '.join(rec['segments_to_avoid'])}")
+                        lines.append(
+                            f"\n**Avoid:** {', '.join(rec['segments_to_avoid'])}"
+                        )
                     content = "\n".join(lines)
                     st.session_state.messages.append(
-                        {"role": "assistant", "content": content, "tools": ["recommend_audience"]}
+                        {
+                            "role": "assistant",
+                            "content": content,
+                            "tools": ["recommend_audience"],
+                        }
                     )
                     st.rerun()
                 elif result and "error" in result:
@@ -554,7 +571,9 @@ def main() -> None:
 
     # Header
     st.markdown("## Campaign Intelligence Assistant")
-    st.caption("Ask questions about campaign performance, generate reports, or get recommendations.")
+    st.caption(
+        "Ask questions about campaign performance, generate reports, or get recommendations."
+    )
 
     # Example chips (only show if no messages yet)
     if not st.session_state.messages:

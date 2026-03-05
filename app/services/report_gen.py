@@ -26,7 +26,6 @@ from app.models.schemas import (
     CampaignComparisonSchema,
     CampaignResponse,
     LCIReportSchema,
-    MetricsOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,7 +106,11 @@ class ReportGenerator:
         sections.append(f"**Targeting:** {campaign.targeting_type.value}  ")
         sections.append(
             f"**Flight Dates:** {campaign.start_date.isoformat()}"
-            + (f" — {campaign.end_date.isoformat()}" if campaign.end_date else " — ongoing")
+            + (
+                f" — {campaign.end_date.isoformat()}"
+                if campaign.end_date
+                else " — ongoing"
+            )
             + "  "
         )
         sections.append(f"**Budget:** {_fmt_currency(campaign.budget)}  ")
@@ -131,9 +134,15 @@ class ReportGenerator:
             sections.append("|--------|-------|")
             sections.append(f"| Visit Lift | {_fmt_pct(m.visit_lift_percent)} |")
             sections.append(f"| Sales Lift | {_fmt_pct(m.sales_lift_percent)} |")
-            sections.append(f"| Incremental ROAS | {_fmt_currency(m.incremental_roas)} |")
-            sections.append(f"| Incremental Visits | {_fmt_number(m.incremental_visits)} |")
-            sections.append(f"| Incremental Sales | {_fmt_currency(m.incremental_sales_dollars)} |")
+            sections.append(
+                f"| Incremental ROAS | {_fmt_currency(m.incremental_roas)} |"
+            )
+            sections.append(
+                f"| Incremental Visits | {_fmt_number(m.incremental_visits)} |"
+            )
+            sections.append(
+                f"| Incremental Sales | {_fmt_currency(m.incremental_sales_dollars)} |"
+            )
             sections.append(f"| Impressions | {_fmt_number(m.impressions)} |")
             sections.append(f"| Avg Basket Size | {_fmt_currency(m.avg_basket_size)} |")
             sections.append(f"| Purchase Frequency | {m.purchase_frequency:.1f}x |")
@@ -216,20 +225,62 @@ class ReportGenerator:
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 28)
         pdf.cell(0, 40, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)  # spacer
-        pdf.cell(0, 15, "Campaign Intelligence Report", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            15,
+            "Campaign Intelligence Report",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         pdf.set_font("Helvetica", "", 16)
-        pdf.cell(0, 12, report_data.campaign_name, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            12,
+            report_data.campaign_name,
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         pdf.set_font("Helvetica", "", 12)
-        pdf.cell(0, 10, f"Client: {report_data.client_name}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.cell(0, 8, f"Vertical: {campaign.vertical.value}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            10,
+            f"Client: {report_data.client_name}",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        pdf.cell(
+            0,
+            8,
+            f"Vertical: {campaign.vertical.value}",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         date_range = campaign.start_date.isoformat()
         if campaign.end_date:
             date_range += f"  to  {campaign.end_date.isoformat()}"
-        pdf.cell(0, 8, f"Flight: {date_range}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.cell(0, 8, f"Budget: {_fmt_currency(campaign.budget)}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            8,
+            f"Flight: {date_range}",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+        pdf.cell(
+            0,
+            8,
+            f"Budget: {_fmt_currency(campaign.budget)}",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         pdf.cell(0, 20, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)  # spacer
 
@@ -239,12 +290,26 @@ class ReportGenerator:
         pdf.rect(60, pdf.get_y(), 90, 25, style="DF")
         pdf.set_font("Helvetica", "I", 10)
         pdf.set_text_color(150, 150, 150)
-        pdf.cell(0, 25, "[Company Logo Placeholder]", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            25,
+            "[Company Logo Placeholder]",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
         pdf.set_text_color(0, 0, 0)
 
         pdf.cell(0, 15, "", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, f"Report Date: {report_data.report_date}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(
+            0,
+            6,
+            f"Report Date: {report_data.report_date}",
+            align="C",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
         # ── Page 2+: Content ──────────────────────────────────────────
         pdf.add_page()
@@ -442,7 +507,9 @@ class ReportGenerator:
 
         # One-line verdict: extract the first sentence of the executive summary
         summary = report_data.executive_summary
-        first_sentence = summary.split(".")[0].strip() + "." if "." in summary else summary[:150]
+        first_sentence = (
+            summary.split(".")[0].strip() + "." if "." in summary else summary[:150]
+        )
         lines.append(f":memo: {first_sentence}")
 
         if report_data.recommendations:

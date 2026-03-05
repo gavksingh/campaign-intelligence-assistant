@@ -10,22 +10,19 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Annotated
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
-from app.models.campaign import Campaign, CampaignMetrics, AudienceSegment
 from app.models.schemas import (
     AudienceRecommendationSchema,
     CampaignComparisonSchema,
     LCIReportSchema,
 )
-from app.services.llm_client import LLMClient, get_llm_client
-from app.services.rag import RAGService, get_rag_service
+from app.services.llm_client import get_llm_client
+from app.services.rag import get_rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +177,8 @@ class QueryCampaignInput(BaseModel):
     """Input schema for query_campaign_data tool."""
 
     query: str = Field(
-        ..., description="Natural language query about campaign data, e.g. 'all completed QSR campaigns in Q4 2025'"
+        ...,
+        description="Natural language query about campaign data, e.g. 'all completed QSR campaigns in Q4 2025'",
     )
 
 
@@ -219,9 +217,13 @@ async def query_campaign_data(query: str) -> str:
         serialized = [_serialize_row(r) for r in rows]
 
         if not serialized:
-            return json.dumps({"result": "No campaigns found matching your query.", "sql": sql})
+            return json.dumps(
+                {"result": "No campaigns found matching your query.", "sql": sql}
+            )
 
-        return json.dumps({"campaigns": serialized, "count": len(serialized), "sql": sql}, default=str)
+        return json.dumps(
+            {"campaigns": serialized, "count": len(serialized), "sql": sql}, default=str
+        )
 
     except ValueError as e:
         logger.warning("SQL validation failed: %s", e)
@@ -238,7 +240,8 @@ class SearchSimilarInput(BaseModel):
     """Input schema for search_similar_campaigns tool."""
 
     query: str = Field(
-        ..., description="Description of what kind of campaign to find, e.g. 'high-performing QSR campaigns with strong visit lift'"
+        ...,
+        description="Description of what kind of campaign to find, e.g. 'high-performing QSR campaigns with strong visit lift'",
     )
 
 
@@ -260,18 +263,22 @@ async def search_similar_campaigns(query: str) -> str:
 
         output = []
         for r in results:
-            output.append({
-                "campaign_name": r["metadata"].get("campaign_name", "Unknown"),
-                "client_name": r["metadata"].get("client_name", "Unknown"),
-                "vertical": r["metadata"].get("vertical", "Unknown"),
-                "status": r["metadata"].get("status", "Unknown"),
-                "incremental_roas": r["metadata"].get("incremental_roas", 0.0),
-                "visit_lift_percent": r["metadata"].get("visit_lift_percent", 0.0),
-                "sales_lift_percent": r["metadata"].get("sales_lift_percent", 0.0),
-                "similarity_score": round(1.0 - r["distance"], 3) if r["distance"] < 1.0 else 0.0,
-                "summary_snippet": r["document"][:300] if r.get("document") else "",
-                "campaign_id": r["metadata"].get("campaign_id", ""),
-            })
+            output.append(
+                {
+                    "campaign_name": r["metadata"].get("campaign_name", "Unknown"),
+                    "client_name": r["metadata"].get("client_name", "Unknown"),
+                    "vertical": r["metadata"].get("vertical", "Unknown"),
+                    "status": r["metadata"].get("status", "Unknown"),
+                    "incremental_roas": r["metadata"].get("incremental_roas", 0.0),
+                    "visit_lift_percent": r["metadata"].get("visit_lift_percent", 0.0),
+                    "sales_lift_percent": r["metadata"].get("sales_lift_percent", 0.0),
+                    "similarity_score": round(1.0 - r["distance"], 3)
+                    if r["distance"] < 1.0
+                    else 0.0,
+                    "summary_snippet": r["document"][:300] if r.get("document") else "",
+                    "campaign_id": r["metadata"].get("campaign_id", ""),
+                }
+            )
 
         return json.dumps({"campaigns": output, "count": len(output)})
 
@@ -286,8 +293,12 @@ async def search_similar_campaigns(query: str) -> str:
 class CompareCampaignsInput(BaseModel):
     """Input schema for compare_campaigns tool."""
 
-    campaign_id_1: int = Field(..., description="Database ID of the first campaign to compare.")
-    campaign_id_2: int = Field(..., description="Database ID of the second campaign to compare.")
+    campaign_id_1: int = Field(
+        ..., description="Database ID of the first campaign to compare."
+    )
+    campaign_id_2: int = Field(
+        ..., description="Database ID of the second campaign to compare."
+    )
 
 
 @tool("compare_campaigns", args_schema=CompareCampaignsInput)
@@ -346,7 +357,9 @@ async def compare_campaigns(campaign_id_1: int, campaign_id_2: int) -> str:
 class GenerateLCIReportInput(BaseModel):
     """Input schema for generate_lci_report tool."""
 
-    campaign_id: int = Field(..., description="Database ID of the campaign to generate a report for.")
+    campaign_id: int = Field(
+        ..., description="Database ID of the campaign to generate a report for."
+    )
 
 
 @tool("generate_lci_report", args_schema=GenerateLCIReportInput)
@@ -444,7 +457,10 @@ async def recommend_audience(description: str) -> str:
         """
         async with async_session_factory() as session:
             result = await session.execute(text(seg_query))
-            all_segments = [_serialize_row(dict(zip(result.keys(), row))) for row in result.fetchall()]
+            all_segments = [
+                _serialize_row(dict(zip(result.keys(), row)))
+                for row in result.fetchall()
+            ]
 
         # Build context from similar campaigns
         similar_context = ""

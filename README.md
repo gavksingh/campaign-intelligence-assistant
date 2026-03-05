@@ -92,11 +92,11 @@ python -m venv .venv && source .venv/bin/activate
 make setup
 ```
 
-### 4. Run migrations & seed data
+### 4. Seed the database
 
 ```bash
-alembic upgrade head
 make seed
+# Creates tables and loads 18 mock campaigns into PostgreSQL + ChromaDB
 ```
 
 ### 5. Start the API

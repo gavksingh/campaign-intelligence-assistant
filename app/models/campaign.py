@@ -22,7 +22,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSON, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -109,9 +109,7 @@ class CampaignMetrics(Base):
     """
 
     __tablename__ = "campaign_metrics"
-    __table_args__ = (
-        Index("ix_campaign_metrics_campaign_id", "campaign_id"),
-    )
+    __table_args__ = (Index("ix_campaign_metrics_campaign_id", "campaign_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[int] = mapped_column(
@@ -138,7 +136,11 @@ class CampaignMetrics(Base):
     @property
     def ctr(self) -> float:
         """Click-through rate (visits / impressions as percentage)."""
-        return (self.incremental_visits / self.impressions * 100) if self.impressions else 0.0
+        return (
+            (self.incremental_visits / self.impressions * 100)
+            if self.impressions
+            else 0.0
+        )
 
     @property
     def cost_per_visit(self) -> float:

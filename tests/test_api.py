@@ -64,9 +64,7 @@ async def test_campaign_not_found(client):
 @pytest.mark.asyncio
 async def test_chat_endpoint_exists(client):
     """POST /api/chat should accept a valid request body."""
-    response = await client.post(
-        "/api/chat", json={"message": "hello"}
-    )
+    response = await client.post("/api/chat", json={"message": "hello"})
     # Will be 200 or 500 depending on agent availability
     assert response.status_code != 404
 

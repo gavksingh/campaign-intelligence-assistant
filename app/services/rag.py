@@ -394,9 +394,7 @@ class RAGService:
                 # Keep the entry but note it appeared in both sources
                 seen[key]["source"] = "both"
                 # Boost relevance: halve the vector distance for dual-source matches
-                seen[key]["distance"] = min(
-                    seen[key]["distance"], vr["distance"] * 0.5
-                )
+                seen[key]["distance"] = min(seen[key]["distance"], vr["distance"] * 0.5)
             else:
                 vr["source"] = "vector"
                 seen[key] = vr

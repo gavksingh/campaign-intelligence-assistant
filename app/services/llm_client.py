@@ -313,7 +313,10 @@ class LLMClient:
             messages=messages,
             temperature=temperature,
             tools=[tool_def],
-            tool_choice={"type": "function", "function": {"name": tool_def["function"]["name"]}},
+            tool_choice={
+                "type": "function",
+                "function": {"name": tool_def["function"]["name"]},
+            },
         )
 
         self._log_usage(model, response.usage)
