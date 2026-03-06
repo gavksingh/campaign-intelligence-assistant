@@ -451,7 +451,7 @@ async def error_handler_node(state: AgentState) -> dict:
 
 def route_after_router(
     state: AgentState,
-) -> Literal["tool_executor", "synthesizer", "error_handler"]:
+) -> Literal["tool_executor", "synthesizer", "error_handler", "__end__"]:
     """Decide where to route after the router node.
 
     Args:
@@ -470,7 +470,12 @@ def route_after_router(
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tool_executor"
 
-    # No tool calls — go straight to END via synthesizer
+    # If the router already has tool results context and produced a direct
+    # response, go straight to END — no need for a redundant synthesizer call.
+    if state.get("current_tool_results"):
+        return END
+
+    # First turn with no tool calls — synthesize (simple greeting etc.)
     return "synthesizer"
 
 
@@ -545,7 +550,7 @@ def build_graph() -> StateGraph:
     # Entry point
     graph.add_edge(START, "router")
 
-    # Router decides: tools, synthesize, or error
+    # Router decides: tools, synthesize, error, or done
     graph.add_conditional_edges(
         "router",
         route_after_router,
@@ -553,6 +558,7 @@ def build_graph() -> StateGraph:
             "tool_executor": "tool_executor",
             "synthesizer": "synthesizer",
             "error_handler": "error_handler",
+            END: END,
         },
     )
 
@@ -679,8 +685,6 @@ async def stream_agent(
         Dicts with 'content' (str), 'done' (bool), and optionally
         'tools_used' and 'sources' on the final chunk.
     """
-    from app.services.llm_client import get_llm_client
-
     logger.info("stream_agent: query='%s'", query[:100])
 
     # Run the full agent graph first to get tool results
@@ -718,9 +722,7 @@ async def stream_agent(
 
         # Collect tool names from messages
         for msg in messages:
-            if isinstance(msg, ToolMessage):
-                tools_used.append("tool_call")
-            elif (
+            if (
                 isinstance(msg, AIMessage)
                 and hasattr(msg, "tool_calls")
                 and msg.tool_calls
@@ -729,24 +731,22 @@ async def stream_agent(
                     tools_used.append(tc.get("name", "unknown"))
 
         tools_used = list(dict.fromkeys(tools_used))  # deduplicate preserving order
-        tools_used = [t for t in tools_used if t != "tool_call"]
 
-        # Build messages for streaming synthesis
-        synth_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                synth_messages.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage) and msg.content:
-                synth_messages.append({"role": "assistant", "content": msg.content})
-            elif isinstance(msg, ToolMessage):
-                synth_messages.append(
-                    {"role": "user", "content": f"[Tool result]: {msg.content[:2000]}"}
-                )
+        # Extract the already-synthesized response from the agent's final state
+        # (the graph already ran the synthesizer node — no need for another LLM call)
+        reply = ""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                reply = msg.content
+                break
 
-        # Stream the final synthesis
-        llm_client = get_llm_client()
-        async for chunk in llm_client.stream_chat_completion(synth_messages):
-            yield {"content": chunk, "done": False}
+        if not reply:
+            reply = "I wasn't able to generate a response. Please try again."
+
+        # Stream the existing response in chunks for SSE
+        chunk_size = 20
+        for i in range(0, len(reply), chunk_size):
+            yield {"content": reply[i : i + chunk_size], "done": False}
 
         # Final message with metadata
         yield {
