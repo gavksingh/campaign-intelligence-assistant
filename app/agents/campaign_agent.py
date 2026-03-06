@@ -262,7 +262,7 @@ async def router_node(state: AgentState) -> dict:
             # Skip retries for rate limits - go straight to END
             return {"messages": [error_msg], "error_count": MAX_RETRIES + 1}
         error_msg = AIMessage(
-            content=f"AI service error (HTTP {status}). Please try again."
+            content=f"AI service error (HTTP {status}): {body[:200]}"
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
