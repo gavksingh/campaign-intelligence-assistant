@@ -296,16 +296,16 @@ async def search_similar_campaigns(query: str) -> str:
 class CompareCampaignsInput(BaseModel):
     """Input schema for compare_campaigns tool."""
 
-    campaign_id_1: int = Field(
-        ..., description="Database ID of the first campaign to compare."
+    campaign_id_1: str = Field(
+        ..., description="Database ID (number) of the first campaign to compare."
     )
-    campaign_id_2: int = Field(
-        ..., description="Database ID of the second campaign to compare."
+    campaign_id_2: str = Field(
+        ..., description="Database ID (number) of the second campaign to compare."
     )
 
 
 @tool("compare_campaigns", args_schema=CompareCampaignsInput)
-async def compare_campaigns(campaign_id_1: int, campaign_id_2: int) -> str:
+async def compare_campaigns(campaign_id_1: str, campaign_id_2: str) -> str:
     """Compare two campaigns side-by-side with detailed metric analysis.
 
     Fetches both campaigns from the database and uses the LLM to generate
@@ -313,6 +313,8 @@ async def compare_campaigns(campaign_id_1: int, campaign_id_2: int) -> str:
     Use this when the user wants to compare Q3 vs Q4, or two different clients.
     """
     llm = get_llm_client()
+    campaign_id_1 = int(campaign_id_1)
+    campaign_id_2 = int(campaign_id_2)
 
     try:
         # Fetch both campaigns
@@ -360,13 +362,13 @@ async def compare_campaigns(campaign_id_1: int, campaign_id_2: int) -> str:
 class GenerateLCIReportInput(BaseModel):
     """Input schema for generate_lci_report tool."""
 
-    campaign_id: int = Field(
-        ..., description="Database ID of the campaign to generate a report for."
+    campaign_id: str = Field(
+        ..., description="Database ID (number) of the campaign to generate a report for."
     )
 
 
 @tool("generate_lci_report", args_schema=GenerateLCIReportInput)
-async def generate_lci_report(campaign_id: int) -> str:
+async def generate_lci_report(campaign_id: str) -> str:
     """Generate a Location Conversion Index (LCI) attribution report for a campaign.
 
     Produces a structured report with executive summary, visit lift analysis,
@@ -374,6 +376,7 @@ async def generate_lci_report(campaign_id: int) -> str:
     This is the standard InMarket campaign performance report format.
     """
     llm = get_llm_client()
+    campaign_id = int(campaign_id)
 
     try:
         campaign = await _fetch_campaign_with_metrics(campaign_id)
