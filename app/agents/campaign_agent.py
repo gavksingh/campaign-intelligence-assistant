@@ -249,7 +249,9 @@ async def router_node(state: AgentState) -> dict:
         )
         return {"messages": [response]}
     except requests.exceptions.HTTPError as e:
-        logger.error("router_node HTTP error: %s", e, exc_info=True)
+        status = e.response.status_code if e.response is not None else "unknown"
+        body = e.response.text[:300] if e.response is not None else "no body"
+        logger.error("router_node HTTP error %s: %s", status, body)
         if e.response is not None and e.response.status_code == 429:
             error_msg = AIMessage(
                 content=(
@@ -260,7 +262,7 @@ async def router_node(state: AgentState) -> dict:
             # Skip retries for rate limits - go straight to END
             return {"messages": [error_msg], "error_count": MAX_RETRIES + 1}
         error_msg = AIMessage(
-            content="I encountered an error connecting to the AI service. Please try again."
+            content=f"AI service error (HTTP {status}). Please try again."
         )
         return {"messages": [error_msg], "error_count": state.get("error_count", 0) + 1}
     except Exception as e:
